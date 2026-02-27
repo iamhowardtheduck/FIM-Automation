@@ -56,11 +56,14 @@ curl -X POST "http://localhost:30002/api/fleet/agent_policies?sys_monitoring=tru
 curl -X POST "http://localhost:30002/api/fleet/agent_policies?sys_monitoring=true" --header "kbn-xsrf: true"  -H "Content-Type: application/json" -u "sdg:changeme" -d @/root/FIM-Automation/Agent-Policies/SecOps.json
 curl -X POST "http://localhost:30002/api/fleet/agent_policies?sys_monitoring=true" --header "kbn-xsrf: true"  -H "Content-Type: application/json" -u "sdg:changeme" -d @/root/FIM-Automation/Agent-Policies/NetOps.json
 
+# Add ServiceNow integration assets
+curl -X POST "http://localhost:30002/api/fleet/epm/packages/servicenow/1.3.3" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true
+
 clear
 
 
 echo
 echo
-python3 /root/FIM-Automation/Scripts/cmdb_server.py
+python3 /root/FIM-Automation/cmdb_server.py
 echo
 echo "You are now ready to begin the workshop."
