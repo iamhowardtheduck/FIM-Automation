@@ -18,8 +18,8 @@ section() { echo -e "\n${BOLD}${CYAN}━━━  $*  ━━━━━━━━━�
 # ── Config ────────────────────────────────────────────────────────────────────
 WORKSPACE="${WORKSPACE:-/workspace/workshop/FIM-Automation}"
 REPO_URL="https://github.com/iamhowardtheduck/FIM-Automation.git"
-ES_ENDPOINT="${ES_ENDPOINT:-http://kubernetes-vm:30920}"
-KIBANA_ENDPOINT="${KIBANA_ENDPOINT:-http://kubernetes-vm:30002}"
+ES_ENDPOINT="${ES_ENDPOINT:-http://localhost:30920}"
+KIBANA_ENDPOINT="${KIBANA_ENDPOINT:-http://localhost:30002}"
 ES_USER="${ES_USER:-elastic-rocks}"
 ES_PASS="${ES_PASS:-splunk-sucks}"
 HTTP_PORT="${HTTP_PORT:-8080}"
@@ -36,8 +36,8 @@ while [[ $# -gt 0 ]]; do
     --help|-h)
       echo "Usage: $0 [options]"
       echo "  --workspace DIR   Install path (default: /workspace/workshop/FIM-Automation)"
-      echo "  --es URL          Elasticsearch endpoint (default: http://kubernetes-vm:30920)"
-      echo "  --kibana URL      Kibana endpoint (default: http://kubernetes-vm:30002)"
+      echo "  --es URL          Elasticsearch endpoint (default: http://localhost:30920)"
+      echo "  --kibana URL      Kibana endpoint (default: http://localhost:30002)"
       echo "  --user USER       ES username (default: elastic-rocks)"
       echo "  --pass PASS       ES password (default: splunk-sucks)"
       echo "  --port PORT       Local HTTP server port (default: 8080)"
@@ -106,37 +106,9 @@ fi
 
 cd "${WORKSPACE}"
 
-# ── 3. Handle SSL cert for HTTPS endpoints ────────────────────────────────────
+# ── 3. SSL Certificate Setup (skipped — localhost HTTP) ──────────────────────
 section "SSL Certificate Setup"
-
-ES_HOST=$(echo "${ES_ENDPOINT}" | sed 's|https\?://||' | cut -d: -f1)
-ES_PORT=$(echo "${ES_ENDPOINT}" | sed 's|https\?://||' | cut -d: -f2)
-
-if [[ "${ES_ENDPOINT}" == https* ]]; then
-  info "HTTPS endpoint detected — fetching certificate from ${ES_HOST}:${ES_PORT}..."
-  CERT_FILE="${WORKSPACE}/es-cert.crt"
-
-  openssl s_client -connect "${ES_HOST}:${ES_PORT}" -servername "${ES_HOST}" \
-    </dev/null 2>/dev/null | openssl x509 -outform PEM > "${CERT_FILE}" && \
-    ok "Certificate saved to ${CERT_FILE}" || warn "Could not fetch certificate automatically"
-
-  if [[ -s "${CERT_FILE}" ]]; then
-    info "Installing certificate to OS trust store..."
-    if [[ -d /usr/local/share/ca-certificates ]]; then
-      # Debian/Ubuntu
-      sudo cp "${CERT_FILE}" /usr/local/share/ca-certificates/es-workshop.crt
-      sudo update-ca-certificates
-    elif [[ -d /etc/pki/ca-trust/source/anchors ]]; then
-      # RHEL/CentOS/Fedora
-      sudo cp "${CERT_FILE}" /etc/pki/ca-trust/source/anchors/es-workshop.crt
-      sudo update-ca-trust
-    fi
-    ok "Certificate trusted at OS level"
-    warn "Restart your browser after this script completes for cert changes to take effect"
-  fi
-else
-  info "HTTP endpoint — skipping SSL setup"
-fi
+info "Using HTTP endpoints on localhost — skipping SSL certificate setup"
 
 # ── 4. Test Elasticsearch Connectivity ───────────────────────────────────────
 section "Testing Elasticsearch Connectivity"
@@ -250,8 +222,8 @@ HTML_FILE="${WORKSPACE}/cmdb_generator.html"
 if [[ -f "${HTML_FILE}" ]]; then
   # Patch in the correct endpoints and credentials
   sed -i \
-    -e "s|value=\"http://kubernetes-vm:30920\"|value=\"${ES_ENDPOINT}\"|g" \
-    -e "s|value=\"http://kubernetes-vm:30002\"|value=\"${KIBANA_ENDPOINT}\"|g" \
+    -e "s|value=\"http://localhost:30920\"|value=\"${ES_ENDPOINT}\"|g" \
+    -e "s|value=\"http://localhost:30002\"|value=\"${KIBANA_ENDPOINT}\"|g" \
     -e "s|value=\"elastic-rocks\"|value=\"${ES_USER}\"|g" \
     -e "s|value=\"splunk-sucks\"|value=\"${ES_PASS}\"|g" \
     "${HTML_FILE}"
