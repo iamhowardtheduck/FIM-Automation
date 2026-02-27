@@ -1,0 +1,23 @@
+{
+  "name": "Windows",
+  "description": "Windows Servers",
+  "namespace": "default",
+  "monitoring_enabled": [
+    "logs",
+    "metrics",
+    "traces"
+  ],
+  "id": "windows",
+  "inactivity_timeout": 1209600,
+  "is_protected": false,
+  "global_data_tags": [
+    {
+      "name": "windows.author",
+      "value": "Theodore-Flufferkins"
+    },
+    {
+      "name": "windows.group",
+      "value": "windows-server-admins"
+    }
+  ]
+}
