@@ -1,0 +1,23 @@
+{
+  "name": "AppOps",
+  "description": "Application Management",
+  "namespace": "default",
+  "monitoring_enabled": [
+    "logs",
+    "metrics",
+    "traces"
+  ],
+  "id": "appops",
+  "inactivity_timeout": 1209600,
+  "is_protected": false,
+  "global_data_tags": [
+    {
+      "name": "appops.author",
+      "value": "Captain-Fuzzlebottom"
+    },
+    {
+      "name": "appops.group",
+      "value": "Linux-Servers-Admins"
+    }
+  ]
+}
