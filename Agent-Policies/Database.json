@@ -1,0 +1,23 @@
+{
+  "name": "Database Team",
+  "description": "SRE Focused",
+  "namespace": "default",
+  "monitoring_enabled": [
+    "logs",
+    "metrics",
+    "traces"
+  ],
+  "id": "database",
+  "inactivity_timeout": 1209600,
+  "is_protected": false,
+  "global_data_tags": [
+    {
+      "name": "database.author",
+      "value": "Archibald-Von-Boop"
+    },
+    {
+      "name": "database.group",
+      "value": "Database Team"
+    }
+  ]
+}
