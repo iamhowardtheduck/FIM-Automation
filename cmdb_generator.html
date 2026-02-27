@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CMDB Generator — Elastic FIM Workshop</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&family=Barlow+Condensed:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e17;
+    --surface: #0f1520;
+    --surface2: #161e2e;
+    --border: #1e2d45;
+    --accent: #00d4ff;
+    --accent2: #ff6b35;
+    --accent3: #7fff6b;
+    --accent4: #ffcc00;
+    --text: #c8d8e8;
+    --text-dim: #5a7a9a;
+    --danger: #ff4444;
+    --font-mono: 'Share Tech Mono', monospace;
+    --font-ui: 'Barlow', sans-serif;
+    --font-head: 'Barlow Condensed', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid bg */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .scanline {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: scan 4s linear infinite;
+    opacity: 0.4;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  @keyframes scan {
+    0% { top: 0; }
+    100% { top: 100vh; }
+  }
+
+  header {
+    position: relative;
+    z-index: 1;
+    padding: 24px 32px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .logo-badge {
+    width: 44px; height: 44px;
+    border: 2px solid var(--accent);
+    display: grid;
+    place-items: center;
+    position: relative;
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+    background: rgba(0,212,255,0.05);
+  }
+  .logo-badge svg { width: 22px; height: 22px; fill: var(--accent); }
+
+  .header-text h1 {
+    font-family: var(--font-head);
+    font-size: 1.6rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #fff;
+    line-height: 1;
+  }
+  .header-text p {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    letter-spacing: 0.05em;
+    margin-top: 3px;
+  }
+
+  .header-status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: all 0.3s;
+  }
+  .status-dot.ok { background: var(--accent3); box-shadow: 0 0 8px var(--accent3); }
+  .status-dot.err { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+  .status-dot.busy { background: var(--accent4); box-shadow: 0 0 8px var(--accent4); animation: pulse 0.8s ease-in-out infinite; }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px 32px;
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 20px;
+  }
+
+  /* ── LEFT PANEL ── */
+  .left-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+    padding: 20px;
+  }
+
+  .card-title {
+    font-family: var(--font-head);
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-title::before {
+    content: '';
+    width: 12px; height: 1px;
+    background: var(--accent);
+  }
+
+  .field-group { margin-bottom: 14px; }
+  .field-label {
+    font-size: 0.7rem;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 5px;
+  }
+
+  input[type=text], input[type=number], input[type=password] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 8px 12px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  input:focus { border-color: var(--accent); }
+
+  /* Distribution sliders */
+  .dist-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .dist-label {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    width: 90px;
+    flex-shrink: 0;
+  }
+  .dist-label .os-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+  }
+  input[type=range] {
+    flex: 1;
+    -webkit-appearance: none;
+    height: 3px;
+    background: var(--border);
+    outline: none;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    background: var(--accent);
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+    cursor: pointer;
+  }
+  .dist-val {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--accent);
+    width: 30px;
+    text-align: right;
+  }
+
+  /* Big action button */
+  .btn-generate {
+    width: 100%;
+    padding: 16px;
+    background: transparent;
+    border: 2px solid var(--accent);
+    color: var(--accent);
+    font-family: var(--font-head);
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    cursor: pointer;
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-generate::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .btn-generate:hover::before { opacity: 0.1; }
+  .btn-generate:active { transform: scale(0.98); }
+  .btn-generate:disabled {
+    border-color: var(--border);
+    color: var(--text-dim);
+    cursor: not-allowed;
+  }
+  .btn-generate .btn-inner { position: relative; z-index: 1; }
+
+  .btn-secondary {
+    width: 100%;
+    padding: 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.05em;
+  }
+  .btn-secondary:hover { border-color: var(--accent2); color: var(--accent2); }
+
+  /* Stats grid */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .stat-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    text-align: center;
+  }
+  .stat-val {
+    font-family: var(--font-mono);
+    font-size: 1.4rem;
+    color: var(--accent);
+    line-height: 1;
+    transition: all 0.3s;
+  }
+  .stat-val.green { color: var(--accent3); }
+  .stat-val.orange { color: var(--accent2); }
+  .stat-val.yellow { color: var(--accent4); }
+  .stat-lbl {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: var(--font-mono);
+    margin-top: 3px;
+  }
+
+  /* Progress bar */
+  .progress-wrap {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    height: 6px;
+    position: relative;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent3));
+    width: 0%;
+    transition: width 0.3s;
+    position: relative;
+  }
+  .progress-bar::after {
+    content: '';
+    position: absolute;
+    right: 0; top: 0; bottom: 0;
+    width: 30px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4));
+    animation: shimmer 1s linear infinite;
+  }
+  @keyframes shimmer { 0% { opacity: 0; } 50% { opacity: 1; } 100% { opacity: 0; } }
+
+  /* ── RIGHT PANEL ── */
+  .right-panel { display: flex; flex-direction: column; gap: 16px; }
+
+  .log-terminal {
+    background: #060a10;
+    border: 1px solid var(--border);
+    height: 380px;
+    overflow-y: auto;
+    padding: 16px;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1.6;
+    position: relative;
+  }
+  .log-terminal::-webkit-scrollbar { width: 4px; }
+  .log-terminal::-webkit-scrollbar-track { background: transparent; }
+  .log-terminal::-webkit-scrollbar-thumb { background: var(--border); }
+
+  .log-entry { display: flex; gap: 10px; }
+  .log-ts { color: var(--text-dim); flex-shrink: 0; }
+  .log-msg.info { color: var(--accent); }
+  .log-msg.ok { color: var(--accent3); }
+  .log-msg.warn { color: var(--accent4); }
+  .log-msg.err { color: var(--danger); }
+  .log-msg.dim { color: var(--text-dim); }
+
+  /* Table */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .table-header-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .table-header-bar .card-title { margin-bottom: 0; }
+
+  .filter-row {
+    display: flex;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .filter-btn {
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    transition: all 0.15s;
+  }
+  .filter-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0,212,255,0.07); }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    position: sticky; top: 0;
+  }
+  tbody tr {
+    border-bottom: 1px solid rgba(30,45,69,0.5);
+    transition: background 0.15s;
+    animation: rowIn 0.3s ease forwards;
+    opacity: 0;
+  }
+  @keyframes rowIn {
+    from { opacity: 0; transform: translateX(-8px); }
+    to { opacity: 1; transform: none; }
+  }
+  tbody tr:hover { background: rgba(0,212,255,0.04); }
+  tbody td {
+    padding: 7px 12px;
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    color: var(--text);
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 7px;
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid;
+    font-family: var(--font-mono);
+  }
+  .badge.linux { color: var(--accent3); border-color: rgba(127,255,107,0.4); }
+  .badge.windows { color: var(--accent); border-color: rgba(0,212,255,0.4); }
+  .badge.sql { color: var(--accent4); border-color: rgba(255,204,0,0.4); }
+  .badge.app { color: var(--accent2); border-color: rgba(255,107,53,0.4); }
+
+  .status-badge {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+  }
+  .status-badge.installed { background: var(--accent3); }
+  .status-badge.retired { background: var(--danger); }
+  .status-badge.in_maintenance { background: var(--accent4); }
+  .status-badge.on_order { background: var(--text-dim); }
+
+  .table-scroll { max-height: 340px; overflow-y: auto; }
+  .table-scroll::-webkit-scrollbar { width: 4px; }
+  .table-scroll::-webkit-scrollbar-thumb { background: var(--border); }
+
+  /* Breadcrumb trail */
+  .crumb {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    padding: 8px 0;
+  }
+  .crumb span { color: var(--accent); }
+
+  /* ES connection test */
+  .conn-test {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+
+  /* Notification toast */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--surface2);
+    border: 1px solid var(--accent);
+    padding: 12px 20px;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--accent);
+    z-index: 100;
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+    transform: translateY(20px);
+    opacity: 0;
+    transition: all 0.3s;
+  }
+  .toast.show { transform: none; opacity: 1; }
+  .toast.err { border-color: var(--danger); color: var(--danger); }
+
+  .section-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+    margin: 4px 0;
+  }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+</style>
+</head>
+<body>
+<div class="scanline"></div>
+
+<header>
+  <div class="logo-badge">
+    <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+  </div>
+  <div class="header-text">
+    <h1>CMDB Generator</h1>
+    <p>Elastic FIM Workshop // ServiceNow Event Simulation</p>
+  </div>
+  <div class="header-status">
+    <div class="status-dot" id="connDot"></div>
+    <span id="connText">NOT CONNECTED</span>
+    &nbsp;|&nbsp;
+    <span id="esVersion" style="color:var(--text-dim)">ES: —</span>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- LEFT PANEL -->
+  <div class="left-panel">
+
+    <!-- Elasticsearch config -->
+    <div class="card">
+      <div class="card-title">Elasticsearch Config</div>
+      <div class="field-group">
+        <div class="field-label">ES Endpoint</div>
+        <input type="text" id="esEndpoint" value="http://kubernetes-vm:30920" />
+      </div>
+      <div class="field-group">
+        <div class="field-label">Kibana Endpoint</div>
+        <input type="text" id="kibanaEndpoint" value="http://kubernetes-vm:30002" />
+      </div>
+      <div class="two-col">
+        <div class="field-group">
+          <div class="field-label">Username</div>
+          <input type="text" id="esUser" value="elastic-rocks" />
+        </div>
+        <div class="field-group">
+          <div class="field-label">Password</div>
+          <input type="password" id="esPass" value="splunk-sucks" />
+        </div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Target Index</div>
+        <input type="text" id="esIndex" value="logs-servicenow.event-default" />
+      </div>
+      <button class="btn-secondary" onclick="testConnection()">⬡ TEST CONNECTION</button>
+    </div>
+
+    <!-- Generation Controls -->
+    <div class="card">
+      <div class="card-title">Generation Config</div>
+
+      <div class="field-group">
+        <div class="field-label">Total Hosts (max 200)</div>
+        <input type="number" id="totalHosts" value="200" min="10" max="200" />
+      </div>
+      <div class="field-group">
+        <div class="field-label">Custom Applications</div>
+        <input type="number" id="totalApps" value="50" min="5" max="100" />
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="field-label" style="margin: 10px 0 8px">Host Distribution</div>
+
+      <div class="dist-row">
+        <div class="dist-label"><span class="os-dot" style="background:var(--accent3)"></span>Linux</div>
+        <input type="range" id="distLinux" min="0" max="100" value="40" oninput="normalizeDist('linux')">
+        <div class="dist-val" id="distLinuxVal">40%</div>
+      </div>
+      <div class="dist-row">
+        <div class="dist-label"><span class="os-dot" style="background:var(--accent)"></span>Windows</div>
+        <input type="range" id="distWindows" min="0" max="100" value="35" oninput="normalizeDist('windows')">
+        <div class="dist-val" id="distWindowsVal">35%</div>
+      </div>
+      <div class="dist-row">
+        <div class="dist-label"><span class="os-dot" style="background:var(--accent4)"></span>SQL Server</div>
+        <input type="range" id="distSQL" min="0" max="100" value="25" oninput="normalizeDist('sql')">
+        <div class="dist-val" id="distSQLVal">25%</div>
+      </div>
+
+      <div class="section-divider" style="margin:12px 0"></div>
+      <div class="field-label" style="margin-bottom:8px">Change Simulation Mode</div>
+      <div class="field-group">
+        <select id="changeMode" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:0.82rem;padding:8px 12px;outline:none;">
+          <option value="initial">Initial Load — Full CMDB snapshot</option>
+          <option value="changes">Delta Changes — Simulate modifications</option>
+          <option value="mixed">Mixed — New hosts + changes</option>
+          <option value="decommission">Decommission Sweep</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Ingest Delay (ms between docs)</div>
+        <input type="number" id="ingestDelay" value="50" min="0" max="2000" />
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="card">
+      <div class="card-title">Session Stats</div>
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-val" id="statTotal">0</div>
+          <div class="stat-lbl">Generated</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-val green" id="statOk">0</div>
+          <div class="stat-lbl">Indexed OK</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-val orange" id="statFail">0</div>
+          <div class="stat-lbl">Failures</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-val yellow" id="statRate">0/s</div>
+          <div class="stat-lbl">Ingest Rate</div>
+        </div>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+      <div style="margin-top:8px;font-family:var(--font-mono);font-size:0.68rem;color:var(--text-dim);text-align:center" id="progressText">Ready</div>
+    </div>
+
+    <!-- Actions -->
+    <button class="btn-generate" id="btnGenerate" onclick="startGeneration()">
+      <div class="btn-inner">⬢ GENERATE &amp; INGEST CMDB</div>
+    </button>
+    <button class="btn-secondary" onclick="stopGeneration()">■ STOP</button>
+    <button class="btn-secondary" onclick="clearLog()">⌫ CLEAR LOG</button>
+    <button class="btn-secondary" onclick="openKibana()">⬡ OPEN KIBANA DISCOVER</button>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel">
+
+    <!-- Log terminal -->
+    <div class="card" style="padding:0; clip-path: none;">
+      <div class="table-header-bar">
+        <div class="card-title">Ingest Log</div>
+        <div style="font-family:var(--font-mono);font-size:0.68rem;color:var(--text-dim)" id="logCount">0 entries</div>
+      </div>
+      <div class="log-terminal" id="logTerminal">
+        <div class="log-entry">
+          <span class="log-ts">00:00:00</span>
+          <span class="log-msg dim">System ready. Configure and press GENERATE to begin.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Generated records table -->
+    <div class="table-wrap">
+      <div class="table-header-bar">
+        <div class="card-title">Generated Records</div>
+        <div id="recordCount" style="font-family:var(--font-mono);font-size:0.68rem;color:var(--text-dim)">0 records</div>
+      </div>
+      <div class="filter-row">
+        <button class="filter-btn active" onclick="setFilter('all', this)">ALL</button>
+        <button class="filter-btn" onclick="setFilter('linux', this)">LINUX</button>
+        <button class="filter-btn" onclick="setFilter('windows', this)">WINDOWS</button>
+        <button class="filter-btn" onclick="setFilter('sql', this)">SQL</button>
+        <button class="filter-btn" onclick="setFilter('app', this)">APPS</button>
+        <button class="filter-btn" onclick="setFilter('installed', this)">INSTALLED</button>
+        <button class="filter-btn" onclick="setFilter('retired', this)">RETIRED</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Host Name</th>
+              <th>Type</th>
+              <th>OS / Platform</th>
+              <th>IP Address</th>
+              <th>Environment</th>
+              <th>Status</th>
+              <th>Change Type</th>
+            </tr>
+          </thead>
+          <tbody id="recordTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ─────────────────────────────────────────────
+// DATA DEFINITIONS
+// ─────────────────────────────────────────────
+const LINUX_DISTROS = [
+  { os: 'Red Hat Enterprise Linux 8', os_version: '8.8', cpu_name: 'Intel Xeon E5-2690', cpu_manufacturer: 'Intel' },
+  { os: 'Red Hat Enterprise Linux 9', os_version: '9.2', cpu_name: 'Intel Xeon Gold 6252', cpu_manufacturer: 'Intel' },
+  { os: 'Ubuntu 22.04 LTS', os_version: '22.04', cpu_name: 'AMD EPYC 7542', cpu_manufacturer: 'AMD' },
+  { os: 'Ubuntu 20.04 LTS', os_version: '20.04', cpu_name: 'Intel Xeon E5-2670', cpu_manufacturer: 'Intel' },
+  { os: 'CentOS Linux 7', os_version: '7.9', cpu_name: 'Intel Xeon E5-2650', cpu_manufacturer: 'Intel' },
+  { os: 'Amazon Linux 2', os_version: '2.0', cpu_name: 'AWS Graviton2', cpu_manufacturer: 'AWS' },
+  { os: 'SUSE Linux Enterprise 15', os_version: '15.4', cpu_name: 'AMD EPYC 7763', cpu_manufacturer: 'AMD' },
+];
+
+const WINDOWS_DISTROS = [
+  { os: 'Windows Server 2022', os_version: '21H2', os_service_pack: 'KB5026870' },
+  { os: 'Windows Server 2019', os_version: '1809', os_service_pack: 'KB5026362' },
+  { os: 'Windows Server 2016', os_version: '1607', os_service_pack: 'KB5025723' },
+  { os: 'Windows 11 Pro', os_version: '22H2', os_service_pack: 'KB5027231' },
+  { os: 'Windows 10 Enterprise', os_version: '21H2', os_service_pack: 'KB5026361' },
+];
+
+const SQL_PLATFORMS = [
+  { os: 'Windows Server 2022', os_version: '21H2', sql: 'Microsoft SQL Server 2022', edition: 'Enterprise' },
+  { os: 'Windows Server 2019', os_version: '1809', sql: 'Microsoft SQL Server 2019', edition: 'Standard' },
+  { os: 'Red Hat Enterprise Linux 8', os_version: '8.8', sql: 'Microsoft SQL Server 2022', edition: 'Developer' },
+  { os: 'Windows Server 2016', os_version: '1607', sql: 'Microsoft SQL Server 2017', edition: 'Enterprise' },
+  { os: 'Ubuntu 20.04 LTS', os_version: '20.04', sql: 'PostgreSQL 15', edition: 'Community' },
+  { os: 'Red Hat Enterprise Linux 9', os_version: '9.2', sql: 'MySQL 8.0', edition: 'Community' },
+  { os: 'Windows Server 2019', os_version: '1809', sql: 'Oracle Database 19c', edition: 'Enterprise' },
+];
+
+const CUSTOM_APPS = [
+  'PaymentGateway','FraudDetector','CustomerPortal','InventoryMgr','OrderProcessor',
+  'ShipmentTracker','AuthService','NotificationHub','ReportEngine','DataWarehouse',
+  'ComplianceAudit','RiskScorer','ClaimsProcessor','PolicyEngine','UnderwriterAI',
+  'LoanOrigination','CreditChecker','ACHProcessor','WireTransferSvc','KYCVerifier',
+  'AMLScanner','TransactionMonitor','AlertManager','CaseWorkflow','InvestigationMgr',
+  'DocumentVault','ESignatureSvc','WorkflowEngine','IntegrationBus','APIGateway',
+  'IdentityProvider','SessionManager','AuditLogger','MetricsCollector','HealthDashboard',
+  'BackupOrchestrator','DisasterRecovery','ConfigManager','DeploymentEngine','PatchMgr',
+  'VulnScanner','SOCPlatform','ThreatIntel','SIEMConnector','EDRManager',
+  'CertificateAuthority','SecretVault','FirewallOrchestrator','ZeroTrustGateway','MDMConsole'
+];
+
+const DEPARTMENTS = ['Finance','Engineering','Operations','Security','Compliance','HR','Legal','IT','Marketing','Sales'];
+const LOCATIONS = ['New York DC1','Chicago DC2','Austin DC3','Seattle DC4','London DC5','Frankfurt DC6','Singapore DC7','Toronto DC8'];
+const ENVIRONMENTS = ['Production','Staging','Development','QA','DR','UAT'];
+const ENV_WEIGHTS = [50,15,15,10,6,4]; // weighted distribution
+const INSTALL_STATUSES = ['Installed','Retired','In Maintenance','On Order'];
+const INST_WEIGHTS = [75,10,10,5];
+const CLASSIFICATIONS = ['Highly Confidential','Confidential','Internal Use','Public'];
+const SUPPORT_GROUPS = ['Linux Admin','Windows Admin','Database Team','AppOps','SecOps','NetOps'];
+const CHANGE_TYPES = ['new','modified','modified','modified','decommissioned']; // weighted toward modified
+
+// ─────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────
+let running = false;
+let logCount = 0;
+let statTotal = 0, statOk = 0, statFail = 0;
+let startTime = null;
+let allRecords = [];
+let activeFilter = 'all';
+let generatedApps = [];
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function randIP() {
+  const subnets = ['10.10','10.20','10.30','172.16','192.168.1','192.168.2'];
+  return `${rand(subnets)}.${randInt(1,254)}.${randInt(1,254)}`;
+}
+function weightedRand(arr, weights) {
+  const total = weights.reduce((a,b) => a+b, 0);
+  let r = Math.random() * total;
+  for (let i=0; i<arr.length; i++) { r -= weights[i]; if (r <= 0) return arr[i]; }
+  return arr[arr.length-1];
+}
+function sysId() {
+  return 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'.replace(/x/g, () =>
+    Math.floor(Math.random()*16).toString(16));
+}
+function randDate(daysBack=365) {
+  const d = new Date(Date.now() - Math.random()*daysBack*86400000);
+  return d.toISOString();
+}
+function tsNow() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+}
+function getAuth() {
+  const u = document.getElementById('esUser').value;
+  const p = document.getElementById('esPass').value;
+  return 'Basic ' + btoa(`${u}:${p}`);
+}
+
+// Build app list once
+function buildApps(n) {
+  generatedApps = [];
+  const shuffled = [...CUSTOM_APPS].sort(() => Math.random()-0.5).slice(0, Math.min(n, CUSTOM_APPS.length));
+  for (let i=0; i<n; i++) {
+    const baseName = shuffled[i % shuffled.length];
+    const ver = `${randInt(1,5)}.${randInt(0,9)}.${randInt(0,20)}`;
+    generatedApps.push({
+      name: baseName,
+      host_name: `app-${baseName.toLowerCase().replace(/[^a-z0-9]/g,'')}-${String(i+1).padStart(2,'0')}`,
+      version: ver,
+      department: rand(DEPARTMENTS),
+      port: randInt(8000,9999),
+    });
+  }
+}
+
+// ─────────────────────────────────────────────
+// DOCUMENT GENERATORS
+// ─────────────────────────────────────────────
+function makeBaseDoc(hostName, ip, changeType) {
+  const now = new Date().toISOString();
+  const sysUpdated = randDate(30);
+  return {
+    '@timestamp': now,
+    'event': { 'module': 'servicenow', 'dataset': 'servicenow.event' },
+    'data_stream': { 'type': 'logs', 'dataset': 'servicenow.event', 'namespace': 'default' },
+    'tags': ['cmdb','fim-workshop', changeType],
+    'servicenow': { 'event': {} }
+  };
+}
+
+function makeLinuxDoc(i, changeType) {
+  const distro = rand(LINUX_DISTROS);
+  const hostName = `lnx-${rand(['web','app','api','svc','db','mon','bkp','prx'])}-${String(i+1).padStart(3,'0')}`;
+  const ip = randIP();
+  const doc = makeBaseDoc(hostName, ip, changeType);
+  const env = weightedRand(ENVIRONMENTS, ENV_WEIGHTS);
+  const status = weightedRand(INSTALL_STATUSES, INST_WEIGHTS);
+  const ramMB = rand([8192,16384,32768,65536,131072]);
+
+  doc.servicenow.event = {
+    sys_id: { value: sysId(), display_value: sysId() },
+    sys_class_name: { value: 'cmdb_ci_linux_server', display_value: 'Linux Server' },
+    sys_updated_on: { value: randDate(30), display_value: randDate(30) },
+    sys_updated_by: { value: 'cmdb.sync', display_value: 'CMDB Sync' },
+    sys_created_by: { value: 'cmdb.sync', display_value: 'CMDB Sync' },
+    host_name: { value: hostName, display_value: hostName },
+    name: { value: hostName, display_value: hostName },
+    fqdn: { value: `${hostName}.corp.internal`, display_value: `${hostName}.corp.internal` },
+    dns_domain: { value: 'corp.internal', display_value: 'corp.internal' },
+    ip_address: { value: ip, display_value: ip },
+    os: { value: distro.os, display_value: distro.os },
+    os_version: { value: distro.os_version, display_value: distro.os_version },
+    os_domain: { value: 'corp.internal', display_value: 'corp.internal' },
+    os_address_width: { value: '64', display_value: '64' },
+    cpu_name: { value: distro.cpu_name, display_value: distro.cpu_name },
+    cpu_manufacturer: { value: distro.cpu_manufacturer, display_value: distro.cpu_manufacturer },
+    cpu_count: { value: rand([2,4,8,16,32,64]), display_value: String(rand([2,4,8,16,32,64])) },
+    ram: { value: ramMB, display_value: `${ramMB/1024} GB` },
+    disk_space: { value: rand([100,250,500,1000,2000,4000]), display_value: `${rand([100,250,500,1000,2000,4000])} GB` },
+    environment: { value: env.toLowerCase(), display_value: env },
+    classification: { value: rand(CLASSIFICATIONS), display_value: rand(CLASSIFICATIONS) },
+    install_status: { value: status, display_value: status },
+    department: { value: rand(DEPARTMENTS), display_value: rand(DEPARTMENTS) },
+    location: { value: rand(LOCATIONS), display_value: rand(LOCATIONS) },
+    support_group: { value: 'Linux Admin', display_value: 'Linux Admin' },
+    assigned_to: { value: `svc.linux.${env.toLowerCase()}`, display_value: `Linux ${env} Team` },
+    manufacturer: { value: rand(['Dell','HP','Lenovo','Supermicro','IBM']), display_value: rand(['Dell','HP','Lenovo','Supermicro','IBM']) },
+    model_id: { value: rand(['PowerEdge R750','ProLiant DL380','ThinkSystem SR650']), display_value: rand(['PowerEdge R750','ProLiant DL380','ThinkSystem SR650']) },
+    serial_number: { value: `SN-${sysId().substring(0,8).toUpperCase()}`, display_value: '' },
+    vip: { value: env === 'Production' && Math.random() > 0.7, display_value: env === 'Production' && Math.random() > 0.7 },
+    is_clustered: { value: Math.random() > 0.7, display_value: Math.random() > 0.7 },
+    data_classification: { value: rand(CLASSIFICATIONS), display_value: rand(CLASSIFICATIONS) },
+    vulnerability_risk_score: { value: randInt(0, 100), display_value: String(randInt(0, 100)) },
+    windows_host: { value: false, display_value: false },
+  };
+  return { doc, hostName, ip, type: 'linux', os: distro.os, env, status, changeType };
+}
+
+function makeWindowsDoc(i, changeType) {
+  const distro = rand(WINDOWS_DISTROS);
+  const roles = ['dc','fs','ws','iis','ad','rds','rdg'];
+  const hostName = `win-${rand(roles)}-${String(i+1).padStart(3,'0')}`;
+  const ip = randIP();
+  const doc = makeBaseDoc(hostName, ip, changeType);
+  const env = weightedRand(ENVIRONMENTS, ENV_WEIGHTS);
+  const status = weightedRand(INSTALL_STATUSES, INST_WEIGHTS);
+  const ramMB = rand([8192,16384,32768,65536]);
+
+  doc.servicenow.event = {
+    sys_id: { value: sysId(), display_value: sysId() },
+    sys_class_name: { value: 'cmdb_ci_win_server', display_value: 'Windows Server' },
+    sys_updated_on: { value: randDate(30), display_value: randDate(30) },
+    sys_updated_by: { value: 'cmdb.sync', display_value: 'CMDB Sync' },
+    sys_created_by: { value: 'cmdb.sync', display_value: 'CMDB Sync' },
+    host_name: { value: hostName, display_value: hostName },
+    name: { value: hostName, display_value: hostName },
+    fqdn: { value: `${hostName}.corp.internal`, display_value: `${hostName}.corp.internal` },
+    dns_domain: { value: 'corp.internal', display_value: 'corp.internal' },
+    ip_address: { value: ip, display_value: ip },
+    os: { value: distro.os, display_value: distro.os },
+    os_version: { value: distro.os_version, display_value: distro.os_version },
+    os_service_pack: { value: distro.os_service_pack, display_value: distro.os_service_pack },
+    os_domain: { value: 'CORP', display_value: 'CORP' },
+    os_address_width: { value: '64', display_value: '64' },
+    cpu_name: { value: rand(['Intel Xeon E5-2690','Intel Xeon Gold 6226R','AMD EPYC 7542']), display_value: '' },
+    cpu_manufacturer: { value: rand(['Intel','AMD']), display_value: '' },
+    cpu_count: { value: rand([4,8,16,32]), display_value: '' },
+    ram: { value: ramMB, display_value: `${ramMB/1024} GB` },
+    disk_space: { value: rand([200,500,1000,2000]), display_value: '' },
+    environment: { value: env.toLowerCase(), display_value: env },
+    classification: { value: rand(CLASSIFICATIONS), display_value: rand(CLASSIFICATIONS) },
+    install_status: { value: status, display_value: status },
+    department: { value: rand(DEPARTMENTS), display_value: rand(DEPARTMENTS) },
+    location: { value: rand(LOCATIONS), display_value: rand(LOCATIONS) },
+    support_group: { value: 'Windows Admin', display_value: 'Windows Admin' },
+    assigned_to: { value: `svc.windows.${env.toLowerCase()}`, display_value: `Windows ${env} Team` },
+    manufacturer: { value: rand(['Dell','HP','Lenovo']), display_value: '' },
+    model_id: { value: rand(['PowerEdge R750','ProLiant DL380 Gen10','ThinkSystem SR650']), display_value: '' },
+    serial_number: { value: `SN-${sysId().substring(0,8).toUpperCase()}`, display_value: '' },
+    vip: { value: env === 'Production' && Math.random() > 0.6, display_value: '' },
+    is_clustered: { value: Math.random() > 0.8, display_value: '' },
+    data_classification: { value: rand(CLASSIFICATIONS), display_value: '' },
+    vulnerability_risk_score: { value: randInt(0, 100), display_value: '' },
+    windows_host: { value: true, display_value: true },
+  };
+  return { doc, hostName, ip, type: 'windows', os: distro.os, env, status, changeType };
+}
+
+function makeSQLDoc(i, changeType) {
+  const platform = rand(SQL_PLATFORMS);
+  const hostName = `sql-${rand(['prd','stg','dev','rpt','dw','olap','oltp'])}-${String(i+1).padStart(3,'0')}`;
+  const ip = randIP();
+  const doc = makeBaseDoc(hostName, ip, changeType);
+  const env = weightedRand(ENVIRONMENTS, ENV_WEIGHTS);
+  const status = weightedRand(INSTALL_STATUSES, INST_WEIGHTS);
+  const ramMB = rand([32768,65536,131072,262144]);
+  const isWin = platform.os.toLowerCase().includes('windows');
+
+  doc.servicenow.event = {
+    sys_id: { value: sysId(), display_value: sysId() },
+    sys_class_name: { value: 'cmdb_ci_db_mssql_instance', display_value: 'Database Instance' },
+    sys_updated_on: { value: randDate(30), display_value: randDate(30) },
+    sys_updated_by: { value: 'cmdb.sync', display_value: 'CMDB Sync' },
+    sys_created_by: { value: 'cmdb.sync', display_value: 'CMDB Sync' },
+    host_name: { value: hostName, display_value: hostName },
+    name: { value: hostName, display_value: hostName },
+    fqdn: { value: `${hostName}.corp.internal`, display_value: `${hostName}.corp.internal` },
+    dns_domain: { value: 'corp.internal', display_value: 'corp.internal' },
+    ip_address: { value: ip, display_value: ip },
+    os: { value: platform.os, display_value: platform.os },
+    os_version: { value: platform.os_version, display_value: platform.os_version },
+    platform_host: { value: platform.sql, display_value: platform.sql },
+    model_category: { value: platform.edition, display_value: platform.edition },
+    environment: { value: env.toLowerCase(), display_value: env },
+    classification: { value: 'Highly Confidential', display_value: 'Highly Confidential' },
+    install_status: { value: status, display_value: status },
+    department: { value: rand(['Finance','Engineering','Operations']), display_value: '' },
+    location: { value: rand(LOCATIONS), display_value: rand(LOCATIONS) },
+    support_group: { value: 'Database Team', display_value: 'Database Team' },
+    assigned_to: { value: `svc.dba.${env.toLowerCase()}`, display_value: '' },
+    cpu_count: { value: rand([8,16,32,64]), display_value: '' },
+    ram: { value: ramMB, display_value: `${ramMB/1024} GB` },
+    disk_space: { value: rand([2000,5000,10000,20000]), display_value: '' },
+    manufacturer: { value: rand(['Dell','HP','IBM']), display_value: '' },
+    serial_number: { value: `SN-${sysId().substring(0,8).toUpperCase()}`, display_value: '' },
+    vip: { value: true, display_value: true },
+    is_clustered: { value: Math.random() > 0.4, display_value: '' },
+    data_classification: { value: 'Highly Confidential', display_value: 'Highly Confidential' },
+    vulnerability_risk_score: { value: randInt(0, 80), display_value: '' },
+    windows_host: { value: isWin, display_value: isWin },
+  };
+  return { doc, hostName, ip, type: 'sql', os: `${platform.sql} / ${platform.os}`, env, status, changeType };
+}
+
+function makeAppDoc(appDef, i, changeType) {
+  const ip = randIP();
+  const doc = makeBaseDoc(appDef.host_name, ip, changeType);
+  const env = weightedRand(ENVIRONMENTS, ENV_WEIGHTS);
+  const status = weightedRand(INSTALL_STATUSES, INST_WEIGHTS);
+  const platform = rand(['Red Hat Enterprise Linux 8','Ubuntu 22.04 LTS','Windows Server 2022','Amazon Linux 2']);
+
+  doc.servicenow.event = {
+    sys_id: { value: sysId(), display_value: sysId() },
+    sys_class_name: { value: 'cmdb_ci_appl', display_value: 'Application' },
+    sys_updated_on: { value: randDate(30), display_value: randDate(30) },
+    sys_updated_by: { value: 'cmdb.sync', display_value: 'CMDB Sync' },
+    sys_created_by: { value: 'cmdb.sync', display_value: 'CMDB Sync' },
+    host_name: { value: appDef.host_name, display_value: appDef.host_name },
+    name: { value: appDef.name, display_value: appDef.name },
+    fqdn: { value: `${appDef.host_name}.corp.internal`, display_value: `${appDef.host_name}.corp.internal` },
+    dns_domain: { value: 'corp.internal', display_value: 'corp.internal' },
+    ip_address: { value: ip, display_value: ip },
+    os: { value: platform, display_value: platform },
+    os_version: { value: '1.0', display_value: '1.0' },
+    model_category: { value: 'Custom Application', display_value: 'Custom Application' },
+    environment: { value: env.toLowerCase(), display_value: env },
+    classification: { value: rand(CLASSIFICATIONS), display_value: rand(CLASSIFICATIONS) },
+    install_status: { value: status, display_value: status },
+    department: { value: appDef.department, display_value: appDef.department },
+    location: { value: rand(LOCATIONS), display_value: rand(LOCATIONS) },
+    support_group: { value: 'AppOps', display_value: 'AppOps' },
+    assigned_to: { value: `svc.appops`, display_value: 'AppOps Team' },
+    cpu_count: { value: rand([2,4,8]), display_value: '' },
+    ram: { value: rand([4096,8192,16384]), display_value: '' },
+    disk_space: { value: rand([50,100,250,500]), display_value: '' },
+    vip: { value: appDef.name.includes('Payment') || appDef.name.includes('AML'), display_value: '' },
+    data_classification: { value: rand(CLASSIFICATIONS), display_value: '' },
+    vulnerability_risk_score: { value: randInt(0, 100), display_value: '' },
+    windows_host: { value: platform.toLowerCase().includes('windows'), display_value: '' },
+  };
+  return { doc, hostName: appDef.host_name, ip, type: 'app', os: `${appDef.name} v${appDef.version}`, env, status, changeType };
+}
+
+// ─────────────────────────────────────────────
+// GENERATION PLAN
+// ─────────────────────────────────────────────
+function buildGenerationPlan() {
+  const total = parseInt(document.getElementById('totalHosts').value);
+  const appCount = parseInt(document.getElementById('totalApps').value);
+  const mode = document.getElementById('changeMode').value;
+
+  const linuxPct = parseInt(document.getElementById('distLinux').value) / 100;
+  const winPct = parseInt(document.getElementById('distWindows').value) / 100;
+  const sqlPct = parseInt(document.getElementById('distSQL').value) / 100;
+
+  // Host slots (excluding apps)
+  const hostSlots = total - appCount;
+  let nLinux = Math.round(hostSlots * linuxPct);
+  let nWindows = Math.round(hostSlots * winPct);
+  let nSQL = hostSlots - nLinux - nWindows;
+  if (nSQL < 0) { nLinux += nSQL; nSQL = 0; }
+
+  buildApps(appCount);
+
+  const plan = [];
+
+  for (let i=0; i<nLinux; i++) {
+    let ct = mode === 'initial' ? 'new' :
+             mode === 'changes' ? rand(['modified','modified','modified']) :
+             mode === 'decommission' ? 'decommissioned' :
+             rand(CHANGE_TYPES);
+    plan.push(() => makeLinuxDoc(i, ct));
+  }
+  for (let i=0; i<nWindows; i++) {
+    let ct = mode === 'initial' ? 'new' :
+             mode === 'changes' ? rand(['modified','modified','modified']) :
+             mode === 'decommission' ? 'decommissioned' :
+             rand(CHANGE_TYPES);
+    plan.push(() => makeWindowsDoc(i, ct));
+  }
+  for (let i=0; i<nSQL; i++) {
+    let ct = mode === 'initial' ? 'new' :
+             mode === 'changes' ? rand(['modified','modified','modified']) :
+             mode === 'decommission' ? 'decommissioned' :
+             rand(CHANGE_TYPES);
+    plan.push(() => makeSQLDoc(i, ct));
+  }
+  for (let i=0; i<generatedApps.length; i++) {
+    let ct = mode === 'initial' ? 'new' :
+             mode === 'changes' ? rand(['modified','modified','modified']) :
+             mode === 'decommission' ? 'decommissioned' :
+             rand(CHANGE_TYPES);
+    plan.push(() => makeAppDoc(generatedApps[i], i, ct));
+  }
+
+  // Shuffle
+  return plan.sort(() => Math.random()-0.5);
+}
+
+// ─────────────────────────────────────────────
+// ELASTICSEARCH INGEST
+// ─────────────────────────────────────────────
+async function ingestDoc(doc) {
+  const endpoint = document.getElementById('esEndpoint').value.replace(/\/$/, '');
+  const index = document.getElementById('esIndex').value;
+  const url = `${endpoint}/${index}/_doc`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': getAuth(),
+      'kbn-xsrf': 'true',
+    },
+    body: JSON.stringify(doc)
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`HTTP ${resp.status}: ${err.substring(0,200)}`);
+  }
+  return resp.json();
+}
+
+// ─────────────────────────────────────────────
+// CONNECTION TEST
+// ─────────────────────────────────────────────
+async function testConnection() {
+  const endpoint = document.getElementById('esEndpoint').value.replace(/\/$/, '');
+  setConnStatus('busy', 'CONNECTING...');
+  log('info', `Testing connection to ${endpoint}...`);
+  try {
+    const resp = await fetch(`${endpoint}/`, {
+      headers: { 'Authorization': getAuth() }
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const ver = data.version?.number || '?';
+    document.getElementById('esVersion').textContent = `ES: ${ver}`;
+    setConnStatus('ok', 'CONNECTED');
+    log('ok', `Connected to Elasticsearch ${ver} ✓`);
+    showToast(`Connected to ES ${ver}`);
+  } catch(e) {
+    setConnStatus('err', 'ERROR');
+    log('err', `Connection failed: ${e.message}`);
+    showToast(e.message, true);
+  }
+}
+
+function setConnStatus(state, text) {
+  const dot = document.getElementById('connDot');
+  const txt = document.getElementById('connText');
+  dot.className = `status-dot ${state}`;
+  txt.textContent = text;
+}
+
+// ─────────────────────────────────────────────
+// MAIN GENERATION LOOP
+// ─────────────────────────────────────────────
+async function startGeneration() {
+  if (running) return;
+  running = true;
+  statTotal = 0; statOk = 0; statFail = 0;
+  allRecords = [];
+  document.getElementById('recordTable').innerHTML = '';
+  document.getElementById('btnGenerate').disabled = true;
+  startTime = Date.now();
+
+  const plan = buildGenerationPlan();
+  const delay = parseInt(document.getElementById('ingestDelay').value) || 0;
+  const total = plan.length;
+
+  log('info', `Starting generation of ${total} CMDB records...`);
+  log('dim', `Mode: ${document.getElementById('changeMode').options[document.getElementById('changeMode').selectedIndex].text}`);
+
+  for (let i=0; i<plan.length; i++) {
+    if (!running) break;
+
+    const record = plan[i]();
+    statTotal++;
+
+    try {
+      await ingestDoc(record.doc);
+      statOk++;
+      allRecords.push(record);
+      addTableRow(record);
+      log('ok', `[${String(i+1).padStart(3,'0')}/${total}] ${record.changeType.toUpperCase()} ${record.type.toUpperCase()} — ${record.hostName} (${record.ip})`);
+    } catch(e) {
+      statFail++;
+      log('err', `[${String(i+1).padStart(3,'0')}/${total}] FAIL — ${record.hostName}: ${e.message}`);
+    }
+
+    updateStats(i+1, total);
+
+    if (delay > 0) await sleep(delay);
+  }
+
+  running = false;
+  document.getElementById('btnGenerate').disabled = false;
+  const elapsed = ((Date.now()-startTime)/1000).toFixed(1);
+  log('ok', `─── Generation complete: ${statOk} indexed, ${statFail} failed in ${elapsed}s ───`);
+  showToast(`Done! ${statOk}/${statTotal} records indexed`);
+  setConnStatus('ok', 'COMPLETE');
+}
+
+function stopGeneration() {
+  if (!running) return;
+  running = false;
+  document.getElementById('btnGenerate').disabled = false;
+  log('warn', '⚠ Generation stopped by user');
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ─────────────────────────────────────────────
+// UI UPDATES
+// ─────────────────────────────────────────────
+function updateStats(done, total) {
+  document.getElementById('statTotal').textContent = statTotal;
+  document.getElementById('statOk').textContent = statOk;
+  document.getElementById('statFail').textContent = statFail;
+  const elapsed = (Date.now()-startTime)/1000;
+  const rate = elapsed > 0 ? (statOk/elapsed).toFixed(1) : '0';
+  document.getElementById('statRate').textContent = `${rate}/s`;
+  const pct = Math.round((done/total)*100);
+  document.getElementById('progressBar').style.width = `${pct}%`;
+  document.getElementById('progressText').textContent = `${done} / ${total} (${pct}%)`;
+  document.getElementById('recordCount').textContent = `${allRecords.length} records`;
+}
+
+function log(type, msg) {
+  const terminal = document.getElementById('logTerminal');
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  entry.innerHTML = `<span class="log-ts">${tsNow()}</span><span class="log-msg ${type}">${escHtml(msg)}</span>`;
+  terminal.appendChild(entry);
+  terminal.scrollTop = terminal.scrollHeight;
+  logCount++;
+  document.getElementById('logCount').textContent = `${logCount} entries`;
+}
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function clearLog() {
+  document.getElementById('logTerminal').innerHTML = '';
+  logCount = 0;
+  document.getElementById('logCount').textContent = '0 entries';
+}
+
+function addTableRow(record) {
+  if (!matchesFilter(record)) return;
+  const tbody = document.getElementById('recordTable');
+  const tr = document.createElement('tr');
+  tr.dataset.type = record.type;
+  tr.dataset.status = record.status.toLowerCase().replace(/ /g,'_');
+  tr.style.animationDelay = `${Math.random()*0.1}s`;
+
+  const typeBadge = `<span class="badge ${record.type}">${record.type}</span>`;
+  const statusKey = record.status.toLowerCase().replace(/ /g,'_');
+  const statusDot = `<span class="status-badge ${statusKey}"></span>${record.status}`;
+  const changeCol = record.changeType === 'new' ? `<span style="color:var(--accent3)">NEW</span>` :
+                    record.changeType === 'modified' ? `<span style="color:var(--accent4)">MOD</span>` :
+                    `<span style="color:var(--danger)">DECOM</span>`;
+
+  tr.innerHTML = `
+    <td>${record.hostName}</td>
+    <td>${typeBadge}</td>
+    <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${record.os}">${record.os}</td>
+    <td>${record.ip}</td>
+    <td>${record.env}</td>
+    <td>${statusDot}</td>
+    <td>${changeCol}</td>
+  `;
+  tbody.insertBefore(tr, tbody.firstChild);
+
+  // Limit table display to 200 rows
+  while (tbody.children.length > 200) tbody.removeChild(tbody.lastChild);
+}
+
+function matchesFilter(record) {
+  if (activeFilter === 'all') return true;
+  if (['linux','windows','sql','app'].includes(activeFilter)) return record.type === activeFilter;
+  if (['installed','retired','in_maintenance','on_order'].includes(activeFilter)) {
+    return record.status.toLowerCase().replace(/ /g,'_') === activeFilter;
+  }
+  return true;
+}
+
+function setFilter(f, btn) {
+  activeFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  // Re-render table from allRecords
+  const tbody = document.getElementById('recordTable');
+  tbody.innerHTML = '';
+  allRecords.filter(matchesFilter).slice(-200).forEach(r => addTableRow(r));
+}
+
+function normalizeDist(changed) {
+  const ids = ['distLinux','distWindows','distSQL'];
+  const vals = ids.map(id => parseInt(document.getElementById(id).value));
+  const total = vals.reduce((a,b)=>a+b,0);
+  // Just display, don't force normalization - we'll use ratios
+  document.getElementById('distLinuxVal').textContent = `${vals[0]}%`;
+  document.getElementById('distWindowsVal').textContent = `${vals[1]}%`;
+  document.getElementById('distSQLVal').textContent = `${vals[2]}%`;
+}
+
+function showToast(msg, err=false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast${err?' err':''} show`;
+  setTimeout(()=>t.className=`toast${err?' err':''}`, 3500);
+}
+
+function openKibana() {
+  const kibana = document.getElementById('kibanaEndpoint').value;
+  const index = document.getElementById('esIndex').value;
+  window.open(`${kibana}/app/discover#/?_a=(index:'${index}')`, '_blank');
+}
+
+// Init
+log('dim', 'CMDB Generator initialized. Press TEST CONNECTION first.');
+log('dim', `Target: ${document.getElementById('esEndpoint').value}`);
+log('dim', `Index: logs-servicenow.event-default`);
+</script>
+</body>
+</html>
