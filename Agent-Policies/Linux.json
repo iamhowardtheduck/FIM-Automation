@@ -1,0 +1,23 @@
+{
+  "name": "Linux",
+  "description": "Linux Servers",
+  "namespace": "default",
+  "monitoring_enabled": [
+    "logs",
+    "metrics",
+    "traces"
+  ],
+  "id": "linux",
+  "inactivity_timeout": 1209600,
+  "is_protected": false,
+  "global_data_tags": [
+    {
+      "name": "linux.author",
+      "value": "Mr-Bigglesworth"
+    },
+    {
+      "name": "linux.group",
+      "value": "Linux-Servers-Admins"
+    }
+  ]
+}
