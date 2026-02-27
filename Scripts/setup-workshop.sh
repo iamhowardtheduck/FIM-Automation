@@ -48,6 +48,11 @@ curl -X POST "http://localhost:30002/api/kibana/settings" -H "Content-Type: appl
 
 clear
 
+# Create Elastic-Agent policies
+curl -X POST "http://localhost:30002/api/fleet/agent_policies?sys_monitoring=true" --header "kbn-xsrf: true"  -H "Content-Type: application/json" -u "sdg:changeme" -d @/root/FIM-Automation/Agent-Policies/Linux.json
+curl -X POST "http://localhost:30002/api/fleet/agent_policies?sys_monitoring=true" --header "kbn-xsrf: true"  -H "Content-Type: application/json" -u "sdg:changeme" -d @/root/FIM-Automation/Agent-Policies/Windows.json
+
+
 echo
 echo
 python3 /root/FIM-Automation/Scripts/cmdb_server.py
