@@ -50,5 +50,6 @@ clear
 
 echo
 echo
+python3 /root/FIM-Automation/Scripts/cmdb_server.py
 echo
 echo "You are now ready to begin the workshop."
