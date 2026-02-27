@@ -79,6 +79,7 @@ CLASSIFICATIONS = ['Highly Confidential','Confidential','Internal Use','Public']
 MANUFACTURERS   = ['Dell','HP','Lenovo','Supermicro','IBM']
 MODELS          = ['PowerEdge R750','ProLiant DL380','ThinkSystem SR650']
 CHANGE_TYPES    = ['new','modified','modified','modified','decommissioned']
+SUPPORT_GROUPS  = ['Linux Admin','Windows Admin','Database Team','AppOps','SecOps','NetOps']
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def rnd(lst):           return random.choice(lst)
@@ -187,6 +188,60 @@ def make_app(app_def, i, ct):
         'disk_space':kv(rnd([50,100,250,500])),'windows_host':kv('windows' in plat.lower())}
     return doc, app_def['host'], ip, 'app', f"{app_def['name']} v{app_def['version']}", env, stat
 
+# ── CMDB Snapshot (persists between runs) ────────────────────────────────────
+SNAPSHOT_FILE = '/tmp/cmdb_snapshot.json'
+
+def save_snapshot(records):
+    try:
+        with open(SNAPSHOT_FILE, 'w') as f:
+            json.dump(records, f)
+    except Exception as e:
+        print(f"[warn] Could not save snapshot: {e}")
+
+def load_snapshot():
+    try:
+        with open(SNAPSHOT_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def mutate_record(rec):
+    """Take an existing snapshot record and simulate a realistic change to it."""
+    change_field = rnd(['install_status', 'environment', 'ip_address', 'os_version',
+                        'vulnerability_risk_score', 'department', 'location', 'support_group'])
+    evt = rec['doc']['servicenow']['event']
+    changed = [change_field]
+
+    if change_field == 'install_status':
+        new_val = rnd([s for s in STATUSES if s != evt.get('install_status', {}).get('value')])
+        evt['install_status'] = kv(new_val)
+    elif change_field == 'environment':
+        new_env = weighted(ENVIRONMENTS, ENV_WEIGHTS)
+        evt['environment'] = kv(new_env.lower(), new_env)
+    elif change_field == 'ip_address':
+        evt['ip_address'] = kv(rand_ip())
+    elif change_field == 'os_version':
+        current = evt.get('os_version', {}).get('value', '1.0')
+        parts = current.split('.')
+        parts[-1] = str(int(parts[-1]) + rndint(1, 5)) if parts[-1].isdigit() else '1'
+        evt['os_version'] = kv('.'.join(parts))
+    elif change_field == 'vulnerability_risk_score':
+        evt['vulnerability_risk_score'] = {'value': rndint(0, 100), 'display_value': str(rndint(0, 100))}
+    elif change_field == 'department':
+        evt['department'] = kv(rnd(DEPARTMENTS))
+    elif change_field == 'location':
+        evt['location'] = kv(rnd(LOCATIONS))
+    elif change_field == 'support_group':
+        evt['support_group'] = kv(rnd(SUPPORT_GROUPS))
+
+    # Always bump sys_updated_on
+    evt['sys_updated_on'] = kv(now_ts(), now_ts())
+    rec['doc']['@timestamp'] = now_ts()
+    rec['doc']['tags'] = ['cmdb', 'fim-workshop', 'modified']
+    rec['meta']['changeType'] = 'modified'
+    rec['meta']['changed_fields'] = changed
+    return rec
+
 # ── Generation state ──────────────────────────────────────────────────────────
 gen_state = {
     'running': False,
@@ -264,51 +319,127 @@ def run_generator(cfg, opts):
     delay_ms    = opts.get('delay', 50)
     batch_size  = opts.get('batch', 20)
 
-    pct_sum = opts.get('linux',40) + opts.get('windows',35) + opts.get('sql',25) or 100
+    pct_sum   = opts.get('linux',40) + opts.get('windows',35) + opts.get('sql',25) or 100
     n_linux   = round(host_slots * opts.get('linux',40)   / pct_sum)
     n_windows = round(host_slots * opts.get('windows',35) / pct_sum)
     n_sql     = host_slots - n_linux - n_windows
-    apps      = build_apps(app_count)
 
-    def ct(mode):
-        if mode == 'initial':      return 'new'
-        if mode == 'changes':      return rnd(['modified','modified','modified'])
-        if mode == 'decommission': return 'decommissioned'
-        return rnd(CHANGE_TYPES)
+    # ── Build plan based on mode ──────────────────────────────────────────────
+    plan = []  # list of {'doc':..., 'meta':...}
 
-    plan = []
-    for i in range(n_linux):   plan.append(('linux',   i, ct(mode)))
-    for i in range(n_windows): plan.append(('windows', i, ct(mode)))
-    for i in range(n_sql):     plan.append(('sql',     i, ct(mode)))
-    for i, app in enumerate(apps): plan.append(('app', app, ct(mode)))
-    random.shuffle(plan)
+    if mode in ('changes', 'decommission', 'mixed'):
+        snapshot = load_snapshot()
+        if not snapshot:
+            add_log('warn', 'No snapshot found — running initial load first to build baseline')
+            mode = 'initial'  # fall through to initial
+        else:
+            add_log('info', f"Loaded snapshot: {len(snapshot)} existing hosts")
+
+    if mode == 'initial':
+        apps = build_apps(app_count)
+
+        def make_plan_item(kind, i, app=None):
+            if kind == 'linux':
+                doc, host, ip, typ, os_str, env, stat = make_linux(i, 'new')
+            elif kind == 'windows':
+                doc, host, ip, typ, os_str, env, stat = make_windows(i, 'new')
+            elif kind == 'sql':
+                doc, host, ip, typ, os_str, env, stat = make_sql(i, 'new')
+            else:
+                doc, host, ip, typ, os_str, env, stat = make_app(app, i, 'new')
+            return {
+                'doc': doc,
+                'meta': {'host': host, 'ip': ip, 'type': typ,
+                         'os': os_str, 'env': env, 'status': stat, 'changeType': 'new'}
+            }
+
+        for i in range(n_linux):   plan.append(make_plan_item('linux', i))
+        for i in range(n_windows): plan.append(make_plan_item('windows', i))
+        for i in range(n_sql):     plan.append(make_plan_item('sql', i))
+        for i, app in enumerate(apps): plan.append(make_plan_item('app', i, app))
+        random.shuffle(plan)
+        add_log('info', f"Initial load — generating {len(plan)} new records")
+
+    elif mode == 'changes':
+        # Pick a random subset of existing hosts and mutate them
+        n_change = min(len(snapshot), total_hosts)
+        chosen = random.sample(snapshot, n_change)
+        import copy
+        for rec in chosen:
+            plan.append(mutate_record(copy.deepcopy(rec)))
+        add_log('info', f"Delta changes — mutating {len(plan)} existing hosts from snapshot")
+
+    elif mode == 'decommission':
+        # Mark a subset as Retired
+        n_decom = min(len(snapshot), max(1, total_hosts // 4))
+        chosen = random.sample(snapshot, n_decom)
+        import copy
+        for rec in chosen:
+            r = copy.deepcopy(rec)
+            r['doc']['servicenow']['event']['install_status'] = kv('Retired')
+            r['doc']['servicenow']['event']['sys_updated_on'] = kv(now_ts(), now_ts())
+            r['doc']['@timestamp'] = now_ts()
+            r['doc']['tags'] = ['cmdb', 'fim-workshop', 'decommissioned']
+            r['meta']['changeType'] = 'decommissioned'
+            r['meta']['status'] = 'Retired'
+            plan.append(r)
+        add_log('info', f"Decommission sweep — retiring {len(plan)} hosts from snapshot")
+
+    elif mode == 'mixed':
+        # Half mutations of existing, half new hosts
+        import copy
+        n_existing = len(snapshot)
+        n_mutate = min(n_existing, total_hosts // 2)
+        n_new = total_hosts - n_mutate
+
+        chosen = random.sample(snapshot, n_mutate)
+        for rec in chosen:
+            plan.append(mutate_record(copy.deepcopy(rec)))
+
+        apps = build_apps(app_count)
+        n_new_hosts = n_new - app_count
+        n_new_linux   = round(n_new_hosts * opts.get('linux',40)   / pct_sum)
+        n_new_windows = round(n_new_hosts * opts.get('windows',35) / pct_sum)
+        n_new_sql     = n_new_hosts - n_new_linux - n_new_windows
+
+        for i in range(n_new_linux):
+            doc, host, ip, typ, os_str, env, stat = make_linux(i, 'new')
+            plan.append({'doc': doc, 'meta': {'host': host, 'ip': ip, 'type': typ,
+                          'os': os_str, 'env': env, 'status': stat, 'changeType': 'new'}})
+        for i in range(n_new_windows):
+            doc, host, ip, typ, os_str, env, stat = make_windows(i, 'new')
+            plan.append({'doc': doc, 'meta': {'host': host, 'ip': ip, 'type': typ,
+                          'os': os_str, 'env': env, 'status': stat, 'changeType': 'new'}})
+        for i in range(n_new_sql):
+            doc, host, ip, typ, os_str, env, stat = make_sql(i, 'new')
+            plan.append({'doc': doc, 'meta': {'host': host, 'ip': ip, 'type': typ,
+                          'os': os_str, 'env': env, 'status': stat, 'changeType': 'new'}})
+        for i, app in enumerate(apps):
+            doc, host, ip, typ, os_str, env, stat = make_app(app, i, 'new')
+            plan.append({'doc': doc, 'meta': {'host': host, 'ip': ip, 'type': typ,
+                          'os': os_str, 'env': env, 'status': stat, 'changeType': 'new'}})
+
+        random.shuffle(plan)
+        add_log('info', f"Mixed — {n_mutate} mutations + {n_new} new hosts = {len(plan)} total")
 
     total = len(plan)
     with gen_lock:
         gen_state['total'] = total
 
-    add_log('info', f"Generating {total} records — mode: {mode}")
-    add_log('info', f"Linux: {n_linux}  Windows: {n_windows}  SQL: {n_sql}  Apps: {app_count}")
-
+    # ── Ingest loop ───────────────────────────────────────────────────────────
     batch_docs = []
     batch_meta = []
+    snapshot_accumulator = []
 
     for i, item in enumerate(plan):
         if not gen_state['running']:
             add_log('warn', 'Generation stopped by user')
             break
 
-        kind = item[0]
-        if kind == 'linux':   result = make_linux(item[1], item[2])
-        elif kind == 'windows': result = make_windows(item[1], item[2])
-        elif kind == 'sql':   result = make_sql(item[1], item[2])
-        else:                 result = make_app(item[1], i, item[2])
-
-        doc, host, ip, typ, os_str, env, status = result
-        batch_docs.append(doc)
-        batch_meta.append({'host': host, 'ip': ip, 'type': typ,
-                           'os': os_str, 'env': env, 'status': status,
-                           'changeType': item[2]})
+        batch_docs.append(item['doc'])
+        batch_meta.append(item['meta'])
+        if mode == 'initial':
+            snapshot_accumulator.append(item)
 
         if len(batch_docs) >= batch_size or i == total - 1:
             try:
@@ -333,6 +464,11 @@ def run_generator(cfg, opts):
 
             if delay_ms > 0:
                 time.sleep(delay_ms / 1000)
+
+    # Save snapshot after initial load
+    if mode == 'initial' and snapshot_accumulator:
+        save_snapshot(snapshot_accumulator)
+        add_log('info', f"Snapshot saved — {len(snapshot_accumulator)} hosts stored for delta runs")
 
     elapsed = time.time() - gen_state['start_time']
     rate = gen_state['ok'] / elapsed if elapsed > 0 else 0
