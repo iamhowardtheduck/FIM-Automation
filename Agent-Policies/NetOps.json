@@ -1,0 +1,23 @@
+{
+  "name": "NetworkOps",
+  "description": "SRE Focused",
+  "namespace": "default",
+  "monitoring_enabled": [
+    "logs",
+    "metrics",
+    "traces"
+  ],
+  "id": "netops",
+  "inactivity_timeout": 1209600,
+  "is_protected": false,
+  "global_data_tags": [
+    {
+      "name": "netops.author",
+      "value": "Winston-McSnugglebee"
+    },
+    {
+      "name": "netops.group",
+      "value": "Network-Management"
+    }
+  ]
+}
