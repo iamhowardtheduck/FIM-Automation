@@ -95,14 +95,14 @@ steps:
     type: http
     with:
       method: GET
-      url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002/api/fleet/agent_policies?kuery=name:Windows-Servers"
+      url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002/api/fleet/agent_policies?kuery=name:%22Windows-Servers%22"
       headers:
         kbn-xsrf: "true"
 
   # ── Step 4: Only create policy + FIM if it doesn't already exist ──────────
   - name: policy_create_branch
     type: if
-    condition: "steps.check_policy_exists.output.body.total == 0"
+    condition: "steps.check_policy_exists.output.data.total: 0"
     steps:
 
       # ── Step 4a: Create the Windows-Servers Agent Policy ──────────────────
@@ -136,8 +136,8 @@ steps:
         with:
           message: >
             Agent Policy created.
-            ID: {{ steps.create_agent_policy.output.body.item.id }}
-            Name: {{ steps.create_agent_policy.output.body.item.name }}
+            ID: {{ steps.create_agent_policy.output.data.item.id }}
+            Name: {{ steps.create_agent_policy.output.data.item.name }}
 
       # ── Step 4c: Add FIM integration to the new policy ────────────────────
       - name: add_fim_integration
@@ -149,12 +149,13 @@ steps:
             kbn-xsrf: "true"
             Content-Type: "application/json"
           body:
+            force: true
             name: "fim-windows-servers"
             description: "FIM monitoring for Windows Server critical paths"
             namespace: "{{ consts.policyNamespace }}"
-            policy_id: "{{ steps.create_agent_policy.output.body.item.id }}"
+            policy_id: "{{ steps.create_agent_policy.output.data.item.id }}"
             policy_ids:
-              - "{{ steps.create_agent_policy.output.body.item.id }}"
+              - "{{ steps.create_agent_policy.output.data.item.id }}"
             enabled: true
             package:
               name: "fim"
@@ -226,8 +227,8 @@ steps:
         with:
           message: >
             Workflow complete.
-            Policy "{{ consts.policyName }}" ID: {{ steps.create_agent_policy.output.body.item.id }}
-            FIM package policy ID: {{ steps.add_fim_integration.output.body.item.id }}
+            Policy "{{ consts.policyName }}" ID: {{ steps.create_agent_policy.output.data.item.id }}
+            FIM package policy ID: {{ steps.add_fim_integration.output.data.item.id }}
             CMDB Windows Admin hosts found: {{ steps.query_cmdb_windows.output.hits.total.value }}
 
     else:
@@ -237,6 +238,6 @@ steps:
         with:
           message: >
             Policy "{{ consts.policyName }}" already exists
-            (total found: {{ steps.check_policy_exists.output.body.total }}).
+            (total found: {{ steps.check_policy_exists.output.data.total }}).
             Skipping creation. Delete the existing policy to re-provision.
             CMDB Windows Admin hosts found: {{ steps.query_cmdb_windows.output.hits.total.value }}
