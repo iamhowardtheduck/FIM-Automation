@@ -48,6 +48,25 @@ curl -X POST "http://localhost:30002/api/kibana/settings" -H "Content-Type: appl
 
 clear
 
+# Creat the cmdb-updates index
+curl -X PUT "http://localhost:30920/cmdb-updates" \
+  -H "Content-Type: application/json" \
+  -u "elastic-rocks:splunk-sucks" \
+  -d '{
+    "mappings": {
+      "properties": {
+        "@timestamp":        { "type": "date" },
+        "event.dataset":     { "type": "keyword" },
+        "event.kind":        { "type": "keyword" },
+        "event.category":    { "type": "keyword" },
+        "event.type":        { "type": "keyword" },
+        "host.name":         { "type": "keyword" },
+        "change.is_new":     { "type": "boolean" },
+        "workflow.execution_id": { "type": "keyword" }
+      }
+    }
+  }'
+
 # Create Elastic-Agent policies & Add ServiceNow & FIM integration assets
 curl -X POST "http://localhost:30002/api/fleet/epm/packages/servicenow/1.3.3" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true"
 curl -X POST "http://localhost:30002/api/fleet/epm/packages/fim/1.16.0" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true"
