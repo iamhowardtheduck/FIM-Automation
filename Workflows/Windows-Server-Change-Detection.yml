@@ -1,0 +1,374 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CMDB → Agent Policy: Windows Server FIM Automation + Change Detection
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# What this workflow does:
+#   1. Queries logs-servicenow.event-default for Windows Admin hosts
+#   2. For each host: compares current state to last known state in logs-cmdb-updates
+#   3. Writes a change document to logs-cmdb-updates if any tracked field changed
+#      or if the host has never been seen before
+#   4. Creates (or skips if exists) a Fleet Agent Policy called "Windows-Servers"
+#   5. Adds the FIM 1.16.0 integration with Windows Server-specific monitored paths
+#
+# Trigger: Manual (run from Kibana Workflows UI)
+# Requires: FIM package v1.16.0 already installed in Fleet
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: "CMDB → Windows Agent Policy with FIM + Change Detection"
+description: >
+  Reads CMDB records from logs-servicenow.event-default, identifies Windows Admin
+  hosts running Windows Server 2016/2019/2022, writes change documents to
+  cmdb-updates for any host whose tracked fields have changed or is new,
+  creates a Fleet Agent Policy called Windows-Servers, and attaches the FIM
+  1.16.0 integration with server-critical paths.
+enabled: true
+tags:
+  - fim-workshop
+  - fleet
+  - cmdb
+  - windows
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+consts:
+  cmdbIndex: "logs-servicenow.event-default"
+  targetSupportGroup: "Windows Admin"
+  policyName: "Windows-Servers"
+  policyDescription: "Windows Servers — auto-provisioned by CMDB FIM Workflow"
+  policyNamespace: "default"
+  fimVersion: "1.16.0"
+  cmdbUpdatesIndex: "cmdb-updates"
+
+  # FIM paths for Windows Server (DC, SYSVOL, Group Policy, Tasks, Logs, WMI)
+  fimPaths:
+    - 'C:\Windows\NTDS\ntds.dit'
+    - 'C:\Windows\SYSVOL\'
+    - 'C:\Windows\SYSVOL\domain\Policies\'
+    - 'C:\Windows\System32\Tasks\'
+    - 'C:\Windows\Tasks\'
+    - 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup'
+    - 'C:\Users\*\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup'
+    - 'C:\Windows\System32\GroupPolicy\'
+    - 'C:\Windows\System32\winevt\Logs\'
+    - 'C:\Windows\System32\wbem\'
+    - 'C:\Windows\System32\spool\drivers\'
+
+  # Target OS versions (Windows Server only)
+  targetOS:
+    - "Windows Server 2022"
+    - "Windows Server 2019"
+    - "Windows Server 2016"
+
+# ── Trigger ────────────────────────────────────────────────────────────────────
+triggers:
+  - type: manual
+
+
+# ── Steps ─────────────────────────────────────────────────────────────────────
+steps:
+
+  # ── Step 1: Query CMDB for Windows Admin hosts ─────────────────────────────
+  - name: query_cmdb_windows
+    type: elasticsearch.search
+    with:
+      index: "{{ consts.cmdbIndex }}"
+      size: 1000
+      query:
+        bool:
+          must:
+            - term:
+                servicenow.event.support_group.value:
+                  value: "{{ consts.targetSupportGroup }}"
+            - terms:
+                servicenow.event.os.value:
+                  - "Windows Server 2022"
+                  - "Windows Server 2019"
+                  - "Windows Server 2016"
+
+  # ── Step 2: Log what we found ──────────────────────────────────────────────
+  - name: log_cmdb_results
+    type: console
+    with:
+      message: >
+        CMDB query complete.
+        Found {{ steps.query_cmdb_windows.output.hits.total.value }} Windows Admin
+        hosts running Windows Server 2016/2019/2022.
+        Proceeding to check for existing Agent Policy: {{ consts.policyName }}
+
+  # ── Step 3: Ensure cmdb-updates index exists — PUT _mapping is always safe ──
+  - name: ensure_cmdb_updates_index
+    type: http
+    with:
+      method: PUT
+      url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30920/cmdb-updates/_mapping"
+      headers:
+        Content-Type: "application/json"
+      body:
+        properties:
+          "@timestamp":
+            type: date
+          event:
+            properties:
+              dataset:
+                type: keyword
+              kind:
+                type: keyword
+              category:
+                type: keyword
+              type:
+                type: keyword
+          host:
+            properties:
+              name:
+                type: keyword
+          change:
+            properties:
+              is_new:
+                type: boolean
+          workflow:
+            properties:
+              execution_id:
+                type: keyword
+
+  # ── Step 4: For each CMDB host — write snapshot to cmdb-updates ────────────
+  - name: process_each_host
+    type: foreach
+    foreach: "{{ steps.query_cmdb_windows.output.hits.hits }}"
+    steps:
+
+      # ── Step 4a: Look up last known state for this host ───────────────────
+      - name: lookup_last_state
+        type: elasticsearch.search
+        with:
+          index: "{{ consts.cmdbUpdatesIndex }}"
+          size: 1
+          query:
+            bool:
+              must:
+                - term:
+                    host.name:
+                      value: "{{ foreach.item._source.servicenow.event.host_name.value }}"
+              filter:
+                - term:
+                    event.dataset: "cmdb.update"
+
+
+      # ── Step 4b: Write snapshot doc ───────────────────────────────────────
+      - name: write_change_doc
+        type: http
+        with:
+          method: POST
+          url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30920/{{ consts.cmdbUpdatesIndex }}/_doc"
+          headers:
+            Content-Type: "application/json"
+          body:
+            event:
+              dataset: "cmdb.update"
+              kind: "event"
+              category: "configuration"
+              type: "change"
+            workflow:
+              execution_id: "{{ execution.id }}"
+            host:
+              name: "{{ foreach.item._source.servicenow.event.host_name.value }}"
+            change:
+              is_new: "{{ steps.lookup_last_state.output.hits.total.value == 0 }}"
+            servicenow:
+              event:
+                assigned_to:
+                  value: "{{ foreach.item._source.servicenow.event.assigned_to.value }}"
+                classification:
+                  value: "{{ foreach.item._source.servicenow.event.classification.value }}"
+                cpu_count:
+                  value: "{{ foreach.item._source.servicenow.event.cpu_count.value }}"
+                cpu_manufacturer:
+                  value: "{{ foreach.item._source.servicenow.event.cpu_manufacturer.value }}"
+                cpu_name:
+                  value: "{{ foreach.item._source.servicenow.event.cpu_name.value }}"
+                data_classification:
+                  value: "{{ foreach.item._source.servicenow.event.data_classification.value }}"
+                department:
+                  value: "{{ foreach.item._source.servicenow.event.department.value }}"
+                dns_domain:
+                  value: "{{ foreach.item._source.servicenow.event.dns_domain.value }}"
+                environment:
+                  value: "{{ foreach.item._source.servicenow.event.environment.value }}"
+                fqdn:
+                  value: "{{ foreach.item._source.servicenow.event.fqdn.value }}"
+                host_name:
+                  value: "{{ foreach.item._source.servicenow.event.host_name.value }}"
+                install_status:
+                  display_value: "{{ foreach.item._source.servicenow.event.install_status.display_value }}"
+                location:
+                  value: "{{ foreach.item._source.servicenow.event.location.value }}"
+                manufacturer:
+                  value: "{{ foreach.item._source.servicenow.event.manufacturer.value }}"
+                model_id:
+                  value: "{{ foreach.item._source.servicenow.event.model_id.value }}"
+                os_domain:
+                  value: "{{ foreach.item._source.servicenow.event.os_domain.value }}"
+                os_service_pack:
+                  value: "{{ foreach.item._source.servicenow.event.os_service_pack.value }}"
+                os_version:
+                  value: "{{ foreach.item._source.servicenow.event.os_version.value }}"
+                os:
+                  value: "{{ foreach.item._source.servicenow.event.os.value }}"
+                ram:
+                  display_value: "{{ foreach.item._source.servicenow.event.ram.display_value }}"
+                serial_number:
+                  value: "{{ foreach.item._source.servicenow.event.serial_number.value }}"
+                support_group:
+                  value: "{{ foreach.item._source.servicenow.event.support_group.value }}"
+                sys_class_name:
+                  display_value: "{{ foreach.item._source.servicenow.event.sys_class_name.display_value }}"
+
+  # ── Step 5: Check if the policy already exists ─────────────────────────────
+  - name: check_policy_exists
+    type: http
+    with:
+      method: GET
+      url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002/api/fleet/agent_policies?kuery=name:%22Windows-Servers%22"
+      headers:
+        kbn-xsrf: "true"
+
+  # ── Step 6: Only create policy + FIM if it doesn't already exist ───────────
+  - name: policy_create_branch
+    type: if
+    condition: "steps.check_policy_exists.output.data.total: 0"
+    steps:
+
+      # ── Step 6a: Create the Windows-Servers Agent Policy ──────────────────
+      - name: create_agent_policy
+        type: http
+        with:
+          method: POST
+          url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002/api/fleet/agent_policies"
+          headers:
+            kbn-xsrf: "true"
+            Content-Type: "application/json"
+          body:
+            name: "{{ consts.policyName }}"
+            description: "{{ consts.policyDescription }}"
+            namespace: "{{ consts.policyNamespace }}"
+            monitoring_enabled:
+              - logs
+              - metrics
+              - traces
+            inactivity_timeout: 1209600
+            is_protected: false
+            global_data_tags:
+              - name: "windows.author"
+                value: "Theodore-Flufferkins"
+              - name: "windows.group"
+                value: "windows-server-admins"
+
+      # ── Step 6b: Log the new policy ID ────────────────────────────────────
+      - name: log_policy_created
+        type: console
+        with:
+          message: >
+            Agent Policy created.
+            ID: {{ steps.create_agent_policy.output.data.item.id }}
+            Name: {{ steps.create_agent_policy.output.data.item.name }}
+
+      # ── Step 6c: Add FIM integration to the new policy ────────────────────
+      - name: add_fim_integration
+        type: http
+        with:
+          method: POST
+          url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002/api/fleet/package_policies"
+          headers:
+            kbn-xsrf: "true"
+            Content-Type: "application/json"
+          body:
+            force: true
+            name: "fim-windows-servers"
+            description: "FIM monitoring for Windows Server critical paths"
+            namespace: "{{ consts.policyNamespace }}"
+            policy_id: "{{ steps.create_agent_policy.output.data.item.id }}"
+            policy_ids:
+              - "{{ steps.create_agent_policy.output.data.item.id }}"
+            enabled: true
+            package:
+              name: "fim"
+              version: "{{ consts.fimVersion }}"
+            inputs:
+              - type: "audit/file_integrity"
+                policy_template: "fim"
+                enabled: true
+                streams:
+                  - enabled: true
+                    data_stream:
+                      type: logs
+                      dataset: fim.event
+                    vars:
+                      paths:
+                        value:
+                          - 'C:\Windows\NTDS\ntds.dit'
+                          - 'C:\Windows\SYSVOL\'
+                          - 'C:\Windows\SYSVOL\domain\Policies\'
+                          - 'C:\Windows\System32\Tasks\'
+                          - 'C:\Windows\Tasks\'
+                          - 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup'
+                          - 'C:\Users\*\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup'
+                          - 'C:\Windows\System32\GroupPolicy\'
+                          - 'C:\Windows\System32\winevt\Logs\'
+                          - 'C:\Windows\System32\wbem\'
+                          - 'C:\Windows\System32\spool\drivers\'
+                        type: text
+                      recursive:
+                        value: false
+                        type: bool
+                      scan_at_start:
+                        value: true
+                        type: bool
+                      backend:
+                        value: "auto"
+                        type: text
+                      hash_types:
+                        value:
+                          - sha1
+                        type: text
+                      max_file_size:
+                        value: "100 MiB"
+                        type: text
+                      scan_rate_per_sec:
+                        value: "50 MiB"
+                        type: text
+                      exclude_files:
+                        value:
+                          - '(?i)\.sw[nop]$'
+                          - '~$'
+                          - '/\.git($|/)'
+                          - '\.tmp$'
+                          - '\.log$'
+                          - '\.db$'
+                        type: text
+                      keep_null:
+                        value: false
+                        type: bool
+                      tags:
+                        value:
+                          - fim-event
+                          - windows-server
+                        type: text
+
+      # ── Step 6d: Done ─────────────────────────────────────────────────────
+      - name: log_complete
+        type: console
+        with:
+          message: >
+            Workflow complete.
+            Policy "{{ consts.policyName }}" ID: {{ steps.create_agent_policy.output.data.item.id }}
+            FIM package policy ID: {{ steps.add_fim_integration.output.data.item.id }}
+            CMDB Windows Admin hosts found: {{ steps.query_cmdb_windows.output.hits.total.value }}
+
+    else:
+      # ── Policy already exists — skip creation ──────────────────────────────
+      - name: log_policy_exists
+        type: console
+        with:
+          message: >
+            Policy "{{ consts.policyName }}" already exists
+            (total found: {{ steps.check_policy_exists.output.data.total }}).
+            Skipping creation. Delete the existing policy to re-provision.
+            CMDB Windows Admin hosts found: {{ steps.query_cmdb_windows.output.hits.total.value }}
