@@ -29,7 +29,7 @@ curl -X POST "http://localhost:30920/_security/user/elastic-rocks" -H "Content-T
 bash /opt/workshops/elastic-llm.sh -k false -m claude-sonnet-4 -d true
 
 echo
-echo "AI Assistant Connector configured as OpenAI"
+echo "AI Assistant Connector configured as OpenAI but is really Claude Sonnet 4"
 echo
 
 # Use Security view
