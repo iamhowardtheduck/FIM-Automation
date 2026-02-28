@@ -1,0 +1,102 @@
+name: 🚌 Port Authority Vehicle Positions (Single)
+description: >
+  Fetches real-time vehicle positions and writes the FIRST vehicle only
+  into cmdb.api-results. Confirmed output path: steps.fetch_vehicles.output.data['bustime-response'].vehicle
+enabled: true
+tags: ["cmdb", "transit", "real-time", "port-authority"]
+
+consts:
+  targetIndex: "cmdb.api-results"
+  bustimeUrl: "http://realtime.portauthority.org/bustime/api/v3/getvehicles?key=BRYJ7vNdMGPArTqeudSY95Z6C&rt=BLLB,BLSV,RED,51&format=json"
+
+triggers:
+  - type: scheduled
+    with:
+      every: "1m"
+  - type: manual
+
+steps:
+
+  # ── 1. Fetch vehicle positions ────────────────────────────────────────────
+  - name: fetch_vehicles
+    type: http
+    with:
+      url: "{{ consts.bustimeUrl }}"
+      method: GET
+      headers:
+        Accept: "application/json"
+    on-failure:
+      retry:
+        max-attempts: 3
+        delay: "10s"
+
+  # ── 2. Ensure target index exists ─────────────────────────────────────────
+  - name: ensure_index
+    type: elasticsearch.indices.create
+    with:
+      index: "{{ consts.targetIndex }}"
+      settings:
+        number_of_shards: 1
+        number_of_replicas: 1
+      mappings:
+        properties:
+          vid:          { type: keyword }
+          rtpidatafeed: { type: keyword }
+          tmstmp:       { type: keyword }
+          lat:          { type: float }
+          lon:          { type: float }
+          hdg:          { type: short }
+          pid:          { type: integer }
+          rt:           { type: keyword }
+          rtdir:        { type: keyword }
+          des:          { type: keyword }
+          pdist:        { type: integer }
+          dly:          { type: boolean }
+          spd:          { type: short }
+          tatripid:     { type: keyword }
+          origtatripno: { type: keyword }
+          tablockid:    { type: keyword }
+          zone:         { type: keyword }
+          mode:         { type: short }
+          psgld:        { type: keyword }
+          stst:         { type: integer }
+          stsd:         { type: date, format: "yyyy-MM-dd" }
+    on-failure:
+      continue: true
+
+  # ── 3. Write vehicle[0] to target index ───────────────────────────────────
+  # Confirmed path: output.data['bustime-response'].vehicle[0]
+  - name: index_vehicle
+    type: elasticsearch.index
+    with:
+      index: "{{ consts.targetIndex }}"
+      id: ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].vid }}
+      document:
+        vid:          ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].vid }}
+        rtpidatafeed: ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].rtpidatafeed }}
+        tmstmp:       ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].tmstmp }}
+        lat:          ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].lat }}
+        lon:          ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].lon }}
+        hdg:          ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].hdg }}
+        pid:          ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].pid }}
+        rt:           ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].rt }}
+        rtdir:        ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].rtdir }}
+        des:          ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].des }}
+        pdist:        ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].pdist }}
+        dly:          ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].dly }}
+        spd:          ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].spd }}
+        tatripid:     ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].tatripid }}
+        origtatripno: ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].origtatripno }}
+        tablockid:    ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].tablockid }}
+        zone:         ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].zone }}
+        mode:         ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].mode }}
+        psgld:        ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].psgld }}
+        stst:         ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].stst }}
+        stsd:         ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].stsd }}
+        location:     "{{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].lat }},{{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].lon }}"
+        "@polled_at": "{{ execution.startedAt }}"
+
+  - name: log_complete
+    type: console
+    with:
+      message: "✅ Indexed vehicle ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].vid }} (rt={{ steps.fetch_vehicles.output.data['bustime-response'].vehicle[0].rt }}) into {{ consts.targetIndex }}."
