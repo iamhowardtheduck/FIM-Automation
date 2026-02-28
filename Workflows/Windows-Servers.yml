@@ -27,7 +27,7 @@ tags:
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 consts:
-  cmdbIndex: "logs-servicenow.event-default*"
+  cmdbIndex: "logs-servicenow.event-default"
   targetSupportGroup: "Windows Admin"
   policyName: "Windows-Servers"
   policyDescription: "Windows Servers — auto-provisioned by CMDB FIM Workflow"
@@ -58,6 +58,7 @@ consts:
 triggers:
   - type: manual
 
+
 # ── Steps ─────────────────────────────────────────────────────────────────────
 steps:
 
@@ -87,118 +88,155 @@ steps:
         CMDB query complete.
         Found {{ steps.query_cmdb_windows.output.hits.total.value }} Windows Admin
         hosts running Windows Server 2016/2019/2022.
-        Proceeding to create Agent Policy: {{ consts.policyName }}
+        Proceeding to check for existing Agent Policy: {{ consts.policyName }}
 
-  # ── Step 3: Create the Windows-Servers Agent Policy ─────────────────────
-  - name: create_agent_policy
+  # ── Step 3: Check if the policy already exists ─────────────────────────────
+  - name: check_policy_exists
     type: http
     with:
-      method: POST
-      url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002/api/fleet/agent_policies"
+      method: GET
+      url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002/api/fleet/agent_policies?kuery=name:Windows-Servers"
       headers:
         kbn-xsrf: "true"
-        Content-Type: "application/json"
-      body:
-        name: "{{ consts.policyName }}"
-        description: "{{ consts.policyDescription }}"
-        namespace: "{{ consts.policyNamespace }}"
-        monitoring_enabled:
-          - logs
-          - metrics
-          - traces
-        inactivity_timeout: 1209600
-        is_protected: false
-        global_data_tags:
-          - name: "windows.author"
-            value: "Theodore-Flufferkins"
-          - name: "windows.group"
-            value: "windows-server-admins"
 
-  # ── Step 4: Log the new policy ID ─────────────────────────────────────────
-  - name: log_policy_created
-    type: console
-    with:
-      message: >
-        Agent Policy created.
-        ID: {{ steps.create_agent_policy.output.body.item.id }}
-        Name: {{ steps.create_agent_policy.output.body.item.name }}
+  # ── Step 4: Only create policy + FIM if it doesn't already exist ──────────
+  - name: policy_create_branch
+    type: if
+    condition: "steps.check_policy_exists.output.body.total == 0"
+    steps:
 
-  # ── Step 5: Add FIM integration to the new policy ─────────────────────────
-  - name: add_fim_integration
-    type: http
-    with:
-      method: POST
-      url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002/api/fleet/package_policies"
-      headers:
-        kbn-xsrf: "true"
-        Content-Type: "application/json"
-      body:
-        name: "fim-windows-servers"
-        description: "FIM monitoring for Windows Server critical paths"
-        namespace: "{{ consts.policyNamespace }}"
-        policy_id: "{{ steps.create_agent_policy.output.body.item.id }}"
-        policy_ids:
-          - "{{ steps.create_agent_policy.output.body.item.id }}"
-        enabled: true
-        package:
-          name: "fim"
-          version: "{{ consts.fimVersion }}"
-        inputs:
-          - type: "audit/file_integrity"
-            policy_template: "fim"
+      # ── Step 4a: Create the Windows-Servers Agent Policy ──────────────────
+      - name: create_agent_policy
+        type: http
+        with:
+          method: POST
+          url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002/api/fleet/agent_policies"
+          headers:
+            kbn-xsrf: "true"
+            Content-Type: "application/json"
+          body:
+            name: "{{ consts.policyName }}"
+            description: "{{ consts.policyDescription }}"
+            namespace: "{{ consts.policyNamespace }}"
+            monitoring_enabled:
+              - logs
+              - metrics
+              - traces
+            inactivity_timeout: 1209600
+            is_protected: false
+            global_data_tags:
+              - name: "windows.author"
+                value: "Theodore-Flufferkins"
+              - name: "windows.group"
+                value: "windows-server-admins"
+
+      # ── Step 4b: Log the new policy ID ────────────────────────────────────
+      - name: log_policy_created
+        type: console
+        with:
+          message: >
+            Agent Policy created.
+            ID: {{ steps.create_agent_policy.output.body.item.id }}
+            Name: {{ steps.create_agent_policy.output.body.item.name }}
+
+      # ── Step 4c: Add FIM integration to the new policy ────────────────────
+      - name: add_fim_integration
+        type: http
+        with:
+          method: POST
+          url: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002/api/fleet/package_policies"
+          headers:
+            kbn-xsrf: "true"
+            Content-Type: "application/json"
+          body:
+            name: "fim-windows-servers"
+            description: "FIM monitoring for Windows Server critical paths"
+            namespace: "{{ consts.policyNamespace }}"
+            policy_id: "{{ steps.create_agent_policy.output.body.item.id }}"
+            policy_ids:
+              - "{{ steps.create_agent_policy.output.body.item.id }}"
             enabled: true
-            streams:
-              - enabled: true
-                data_stream:
-                  type: logs
-                  dataset: fim.event
-                vars:
-                  paths:
-                    value: "{{ consts.fimPaths }}"
-                    type: text
-                  recursive:
-                    value: false
-                    type: bool
-                  scan_at_start:
-                    value: true
-                    type: bool
-                  backend:
-                    value: "auto"
-                    type: text
-                  hash_types:
-                    value:
-                      - sha1
-                    type: text
-                  max_file_size:
-                    value: "100 MiB"
-                    type: text
-                  scan_rate_per_sec:
-                    value: "50 MiB"
-                    type: text
-                  exclude_files:
-                    value:
-                      - '(?i)\.sw[nop]$'
-                      - '~$'
-                      - '/\.git($|/)'
-                      - '\.tmp$'
-                      - '\.log$'
-                      - '\.db$'
-                    type: text
-                  keep_null:
-                    value: false
-                    type: bool
-                  tags:
-                    value:
-                      - fim-event
-                      - windows-server
-                    type: text
+            package:
+              name: "fim"
+              version: "{{ consts.fimVersion }}"
+            inputs:
+              - type: "audit/file_integrity"
+                policy_template: "fim"
+                enabled: true
+                streams:
+                  - enabled: true
+                    data_stream:
+                      type: logs
+                      dataset: fim.event
+                    vars:
+                      paths:
+                        value:
+                          - 'C:\Windows\NTDS\ntds.dit'
+                          - 'C:\Windows\SYSVOL\'
+                          - 'C:\Windows\SYSVOL\domain\Policies\'
+                          - 'C:\Windows\System32\Tasks\'
+                          - 'C:\Windows\Tasks\'
+                          - 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup'
+                          - 'C:\Users\*\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup'
+                          - 'C:\Windows\System32\GroupPolicy\'
+                          - 'C:\Windows\System32\winevt\Logs\'
+                          - 'C:\Windows\System32\wbem\'
+                          - 'C:\Windows\System32\spool\drivers\'
+                        type: text
+                      recursive:
+                        value: false
+                        type: bool
+                      scan_at_start:
+                        value: true
+                        type: bool
+                      backend:
+                        value: "auto"
+                        type: text
+                      hash_types:
+                        value:
+                          - sha1
+                        type: text
+                      max_file_size:
+                        value: "100 MiB"
+                        type: text
+                      scan_rate_per_sec:
+                        value: "50 MiB"
+                        type: text
+                      exclude_files:
+                        value:
+                          - '(?i)\.sw[nop]$'
+                          - '~$'
+                          - '/\.git($|/)'
+                          - '\.tmp$'
+                          - '\.log$'
+                          - '\.db$'
+                        type: text
+                      keep_null:
+                        value: false
+                        type: bool
+                      tags:
+                        value:
+                          - fim-event
+                          - windows-server
+                        type: text
 
-  # ── Step 6: Done ──────────────────────────────────────────────────────────
-  - name: log_complete
-    type: console
-    with:
-      message: >
-        Workflow complete.
-        Policy "{{ consts.policyName }}" ID: {{ steps.create_agent_policy.output.body.item.id }}
-        FIM package policy ID: {{ steps.add_fim_integration.output.body.item.id }}
-        CMDB Windows Admin hosts found: {{ steps.query_cmdb_windows.output.hits.total.value }}
+      # ── Step 4d: Done ─────────────────────────────────────────────────────
+      - name: log_complete
+        type: console
+        with:
+          message: >
+            Workflow complete.
+            Policy "{{ consts.policyName }}" ID: {{ steps.create_agent_policy.output.body.item.id }}
+            FIM package policy ID: {{ steps.add_fim_integration.output.body.item.id }}
+            CMDB Windows Admin hosts found: {{ steps.query_cmdb_windows.output.hits.total.value }}
+
+    else:
+      # ── Policy already exists — skip creation ──────────────────────────────
+      - name: log_policy_exists
+        type: console
+        with:
+          message: >
+            Policy "{{ consts.policyName }}" already exists
+            (total found: {{ steps.check_policy_exists.output.body.total }}).
+            Skipping creation. Delete the existing policy to re-provision.
+            CMDB Windows Admin hosts found: {{ steps.query_cmdb_windows.output.hits.total.value }}
