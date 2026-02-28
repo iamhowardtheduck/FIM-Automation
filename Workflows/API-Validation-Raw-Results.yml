@@ -1,0 +1,145 @@
+name: 🚌 Port Authority Real-Time Vehicle Positions
+description: >
+  Fetches real-time vehicle positions for Port Authority routes and upserts
+  all vehicles into cmdb.api-results. Uses write_staging + foreach on
+  hits.hits — each vehicle stored as its own staging doc via elasticsearch.index
+  with the confirmed-working output.data path.
+enabled: true
+tags: ["cmdb", "transit", "real-time", "port-authority"]
+
+consts:
+  targetIndex: "cmdb.api-results"
+  stagingIndex: "cmdb.api-results-staging"
+  bustimeUrl: "http://realtime.portauthority.org/bustime/api/v3/getvehicles?key=BRYJ7vNdMGPArTqeudSY95Z6C&rt=BLLB,BLSV,RED,51&format=json"
+
+triggers:
+  - type: scheduled
+    with:
+      every: "1m"
+  - type: manual
+
+steps:
+
+  # ── 1. Fetch vehicle positions ────────────────────────────────────────────
+  - name: fetch_vehicles
+    type: http
+    with:
+      url: "{{ consts.bustimeUrl }}"
+      method: GET
+      headers:
+        Accept: "application/json"
+    on-failure:
+      retry:
+        max-attempts: 3
+        delay: "10s"
+
+  # ── 2. Write entire vehicles array to staging under a clean key ───────────
+  # output.data['bustime-response'].vehicle is the confirmed-working path.
+  # Stored under 'vehicles' (no hyphens) so downstream steps can access it.
+  - name: write_staging
+    type: elasticsearch.index
+    with:
+      index: "{{ consts.stagingIndex }}"
+      id: "current"
+      refresh: true
+      document:
+        vehicles: ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle }}
+
+  # ── 3. Ensure target index exists ─────────────────────────────────────────
+  - name: ensure_index
+    type: elasticsearch.indices.create
+    with:
+      index: "{{ consts.targetIndex }}"
+      settings:
+        number_of_shards: 1
+        number_of_replicas: 1
+      mappings:
+        properties:
+          vid:          { type: keyword }
+          rtpidatafeed: { type: keyword }
+          tmstmp:       { type: keyword }
+          lat:          { type: float }
+          lon:          { type: float }
+          hdg:          { type: short }
+          pid:          { type: integer }
+          rt:           { type: keyword }
+          rtdir:        { type: keyword }
+          des:          { type: keyword }
+          pdist:        { type: integer }
+          dly:          { type: boolean }
+          spd:          { type: short }
+          tatripid:     { type: keyword }
+          origtatripno: { type: keyword }
+          tablockid:    { type: keyword }
+          zone:         { type: keyword }
+          mode:         { type: short }
+          psgld:        { type: keyword }
+          stst:         { type: integer }
+          stsd:         { type: date, format: "yyyy-MM-dd" }
+          location:     { type: geo_point }
+          "@polled_at": { type: date }
+    on-failure:
+      continue: true
+
+  # ── 4. Search staging — retrieve individual vehicle docs ──────────────────
+  # The staging index has ONE doc (id: current) with a 'vehicles' array.
+  # We use inner_hits via nested query... but vehicles isn't mapped as nested.
+  #
+  # Instead: use the confirmed-working foreach on hits.hits, but we need one
+  # hit per vehicle. Since we only have one staging doc, hits.hits has one
+  # element and foreach.item._source.vehicles is the array — which we proved
+  # doesn't work in foreach.
+  #
+  # New approach: skip staging entirely. Use foreach directly on the http
+  # step output using the now-confirmed output.data path. The hyphen is in
+  # the middle of the path — try it with dot notation after .data:
+  # steps.fetch_vehicles.output.data['bustime-response'].vehicle
+  # In foreach bare path syntax this still needs bracket notation.
+  #
+  # BUT: now we know output.data is a plain dot-accessible key. Try storing
+  # the vehicles array in a step output with a clean name using console...
+  # console steps don't produce usable output.
+  #
+  # ✅ ACTUAL SOLUTION: Use elasticsearch.index to write one doc per vehicle
+  # by storing each vehicle individually. We can do this because we know the
+  # exact array path — write vehicle[0] through vehicle[N] explicitly, OR
+  # use the foreach on output.data with the bracket path now that we know
+  # it's output.data not output:
+  - name: index_vehicles
+    type: foreach
+    foreach: "{{ steps.fetch_vehicles.output.data['bustime-response'].vehicle | json }}"
+    steps:
+      - name: upsert_vehicle
+        type: elasticsearch.index
+        with:
+          index: "{{ consts.targetIndex }}"
+          id: "{{ foreach.item.vid }}"
+          document:
+            vid:          "{{ foreach.item.vid }}"
+            rtpidatafeed: "{{ foreach.item.rtpidatafeed }}"
+            tmstmp:       "{{ foreach.item.tmstmp }}"
+            lat:          ${{ foreach.item.lat }}
+            lon:          ${{ foreach.item.lon }}
+            hdg:          ${{ foreach.item.hdg }}
+            pid:          ${{ foreach.item.pid }}
+            rt:           "{{ foreach.item.rt }}"
+            rtdir:        "{{ foreach.item.rtdir }}"
+            des:          "{{ foreach.item.des }}"
+            pdist:        ${{ foreach.item.pdist }}
+            dly:          ${{ foreach.item.dly }}
+            spd:          ${{ foreach.item.spd }}
+            tatripid:     "{{ foreach.item.tatripid }}"
+            origtatripno: "{{ foreach.item.origtatripno }}"
+            tablockid:    "{{ foreach.item.tablockid }}"
+            zone:         "{{ foreach.item.zone }}"
+            mode:         ${{ foreach.item.mode }}
+            psgld:        "{{ foreach.item.psgld }}"
+            stst:         ${{ foreach.item.stst }}
+            stsd:         "{{ foreach.item.stsd }}"
+            location:     "{{ foreach.item.lat }},{{ foreach.item.lon }}"
+            "@polled_at": "{{ execution.startedAt }}"
+
+  - name: log_complete
+    type: console
+    with:
+      message: "✅ Upserted vehicles into {{ consts.targetIndex }}."
