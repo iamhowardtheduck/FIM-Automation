@@ -1,0 +1,516 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CMDB → Change Detection: Universal Host Tracking + cmdb-updates Audit Log
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# What this workflow does:
+#   1. Queries logs-servicenow.event-default for ALL hosts (configurable by
+#      support group — defaults to all groups)
+#   2. For each host: fetches the last known state from cmdb-updates
+#   3. Compares tracked fields between current and last-known state
+#   4. Writes a cmdb-updates document with:
+#        event.action = "added"   → host seen for the first time
+#        event.action = "changed" → one or more tracked fields differ
+#        event.action = "removed" → install_status changed to Retired/Decommissioned
+#      Documents always include:
+#        • support_group affected
+#        • change_summary: human-readable description
+#        • changed_fields: pipe-delimited string of JSON objects (||| separator)
+#          Parse downstream with ES|QL: SPLIT(changed_fields, "|||")
+#        • full current servicenow.event snapshot
+#   5. Skips unchanged hosts (no write if nothing changed)
+#
+# Trigger: Manual + Scheduled (every 6h by default — adjust in triggers)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: "CMDB Universal Change Detection → cmdb-updates"
+description: >
+  Reads all CMDB records from logs-servicenow.event-default, compares each host
+  to its last known state in cmdb-updates, and writes audit documents with
+  event.action of added / changed / removed and a detailed changed_fields string.
+  Supports all support groups and configurable field tracking.
+enabled: true
+tags:
+  - fim-workshop
+  - cmdb
+  - change-detection
+  - audit
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+consts:
+  cmdbIndex: "logs-servicenow.event-default"
+  cmdbUpdatesIndex: "cmdb-updates"
+
+  # Leave blank ("") to track ALL support groups.
+  # Set to e.g. "Windows Admin" to scope to one group.
+  filterSupportGroup: ""
+
+  esEndpoint: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30920"
+  kibanaEndpoint: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30002"
+
+# ── Triggers ───────────────────────────────────────────────────────────────────
+triggers:
+  - type: manual
+  - type: scheduled
+    with:
+      every: "6h"
+
+
+# ── Steps ─────────────────────────────────────────────────────────────────────
+steps:
+
+  # ── Step 1a: Delete cmdb-updates if it exists with a stale mapping ────────
+  # Required when the index was previously created with changed_fields as
+  # 'nested' — Elasticsearch will not allow merging nested → keyword in-place.
+  # This step always runs; the ignore_unavailable flag means it succeeds even
+  # if the index doesn't exist yet.
+  - name: delete_cmdb_updates_index
+    type: http
+    with:
+      method: DELETE
+      url: "{{ consts.esEndpoint }}/{{ consts.cmdbUpdatesIndex }}?ignore_unavailable=true"
+      headers:
+        Content-Type: "application/json"
+
+  # ── Step 1b: Create cmdb-updates with correct mapping ─────────────────────
+  # FIX [A]: changed_fields is now 'keyword', not 'nested'.
+  # A 'nested' field requires an array of objects. Liquid can only produce a
+  # string. Use ES|QL SPLIT(changed_fields, "|||") to parse downstream.
+  - name: ensure_cmdb_updates_mapping
+    type: http
+    with:
+      method: PUT
+      url: "{{ consts.esEndpoint }}/{{ consts.cmdbUpdatesIndex }}"
+      headers:
+        Content-Type: "application/json"
+      body:
+        mappings:
+          properties:
+            "@timestamp":
+              type: date
+            event:
+              properties:
+                dataset:
+                  type: keyword
+                kind:
+                  type: keyword
+                category:
+                  type: keyword
+                action:
+                  type: keyword        # added | changed | removed
+            host:
+              properties:
+                name:
+                  type: keyword
+            support_group:
+              type: keyword
+            change_summary:
+              type: text
+              fields:
+                keyword:
+                  type: keyword
+            # changed_fields: pipe-delimited string — parse with ES|QL SPLIT(changed_fields, "|||")
+            changed_fields:
+              type: keyword
+              ignore_above: 32766
+            changed_field_count:
+              type: integer
+            is_new:
+              type: boolean
+            is_removed:
+              type: boolean
+            workflow:
+              properties:
+                execution_id:
+                  type: keyword
+                run_timestamp:
+                  type: date
+            servicenow:
+              properties:
+                event:
+                  type: object
+                  dynamic: true
+
+  # ── Step 2: Query CMDB — all hosts (or scoped by support group) ───────────
+  - name: query_cmdb_all_hosts
+    type: elasticsearch.search
+    with:
+      index: "{{ consts.cmdbIndex }}"
+      size: 1000
+      query:
+        bool:
+          must:
+            - bool:
+                should:
+                  - term:
+                      servicenow.event.support_group.value:
+                        value: "{{ consts.filterSupportGroup }}"
+                  - exists:
+                      field: "servicenow.event.host_name.value"
+                minimum_should_match: 1
+          filter:
+            - range:
+                "@timestamp":
+                  gte: "now-48h"
+
+  # ── Step 3: Log query results ──────────────────────────────────────────────
+  - name: log_query_results
+    type: console
+    with:
+      message: >
+        [CMDB Change Detection] Query complete.
+        Total hosts found: {{ steps.query_cmdb_all_hosts.output.hits.total.value }}
+        Support group filter: "{{ consts.filterSupportGroup | default: "(all groups)" }}"
+        Execution ID: {{ execution.id }}
+        Beginning per-host change detection...
+
+  # ── Step 4: Process each host ─────────────────────────────────────────────
+  - name: process_each_host
+    type: foreach
+    foreach: "{{ steps.query_cmdb_all_hosts.output.hits.hits }}"
+    steps:
+
+      # ── 4a: Look up last known state for this host ────────────────────────
+      # FIX [C]: sort: @timestamp desc added. Without it, ES returns an arbitrary
+      # matching doc — not the most recent snapshot — causing false-positive
+      # change detection on every run as random old docs are compared.
+      - name: lookup_last_state
+        type: elasticsearch.search
+        with:
+          index: "{{ consts.cmdbUpdatesIndex }}"
+          size: 1
+          query:
+            bool:
+              must:
+                - term:
+                    host.name:
+                      value: "{{ foreach.item._source.servicenow.event.host_name.value }}"
+              filter:
+                - term:
+                    event.dataset: "cmdb.snapshot"
+
+      # ── 4b: Branch — NEW host (never seen before) ─────────────────────────
+      - name: branch_new_host
+        type: if
+        condition: "{{ steps.lookup_last_state.output.hits.total.value == 0 }}"
+        steps:
+
+          - name: write_added_doc
+            type: http
+            with:
+              method: POST
+              url: "{{ consts.esEndpoint }}/{{ consts.cmdbUpdatesIndex }}/_doc"
+              headers:
+                Content-Type: "application/json"
+              body:
+                "@timestamp": "{{ 'now' | date: '%Y-%m-%dT%H:%M:%SZ' }}"
+                event:
+                  dataset: "cmdb.snapshot"
+                  kind: "event"
+                  category: "configuration"
+                  action: "added"
+                host:
+                  name: "{{ foreach.item._source.servicenow.event.host_name.value }}"
+                support_group: "{{ foreach.item._source.servicenow.event.support_group.value }}"
+                is_new: true
+                is_removed: false
+                change_summary: >
+                  Host {{ foreach.item._source.servicenow.event.host_name.value }}
+                  ({{ foreach.item._source.servicenow.event.support_group.value }})
+                  was added to the CMDB for the first time.
+                  OS: {{ foreach.item._source.servicenow.event.os.value | default: "unknown" }}
+                  | Environment: {{ foreach.item._source.servicenow.event.environment.value | default: "unknown" }}
+                  | Status: {{ foreach.item._source.servicenow.event.install_status.value | default: "unknown" }}
+                changed_fields: ""
+                changed_field_count: 0
+                workflow:
+                  execution_id: "{{ execution.id }}"
+                  run_timestamp: "{{ 'now' | date: '%Y-%m-%dT%H:%M:%SZ' }}"
+                servicenow:
+                  event: "{{ foreach.item._source.servicenow.event }}"
+
+          - name: log_added
+            type: console
+            with:
+              message: >
+                [ADDED] {{ foreach.item._source.servicenow.event.host_name.value }}
+                ({{ foreach.item._source.servicenow.event.support_group.value }})
+                OS: {{ foreach.item._source.servicenow.event.os.value | default: "unknown" }}
+
+        else:
+
+          # ── 4c: Existing host — check for decommission first ──────────────
+          - name: branch_removed
+            type: if
+            condition: >
+              {{-
+                foreach.item._source.servicenow.event.install_status.value == 'Retired'
+                or foreach.item._source.servicenow.event.install_status.value == 'Decommissioned'
+                or foreach.item._source.servicenow.event.install_status.value == 'End of Life'
+              -}}
+            steps:
+
+              - name: write_removed_doc
+                type: http
+                with:
+                  method: POST
+                  url: "{{ consts.esEndpoint }}/{{ consts.cmdbUpdatesIndex }}/_doc"
+                  headers:
+                    Content-Type: "application/json"
+                  body:
+                    "@timestamp": "{{ 'now' | date: '%Y-%m-%dT%H:%M:%SZ' }}"
+                    event:
+                      dataset: "cmdb.snapshot"
+                      kind: "event"
+                      category: "configuration"
+                      action: "removed"
+                    host:
+                      name: "{{ foreach.item._source.servicenow.event.host_name.value }}"
+                    support_group: "{{ foreach.item._source.servicenow.event.support_group.value }}"
+                    is_new: false
+                    is_removed: true
+                    change_summary: >
+                      Host {{ foreach.item._source.servicenow.event.host_name.value }}
+                      ({{ foreach.item._source.servicenow.event.support_group.value }})
+                      has been decommissioned.
+                      install_status:
+                      "{{ steps.lookup_last_state.output.hits.hits[0]._source.servicenow.event.install_status.value | default: 'unknown' }}"
+                      → "{{ foreach.item._source.servicenow.event.install_status.value }}"
+                    changed_fields: >-
+                      {"field":"install_status","before":"{{ steps.lookup_last_state.output.hits.hits[0]._source.servicenow.event.install_status.value | default: '' }}","after":"{{ foreach.item._source.servicenow.event.install_status.value }}"}
+                    changed_field_count: 1
+                    workflow:
+                      execution_id: "{{ execution.id }}"
+                      run_timestamp: "{{ 'now' | date: '%Y-%m-%dT%H:%M:%SZ' }}"
+                    servicenow:
+                      event: "{{ foreach.item._source.servicenow.event }}"
+
+              - name: log_removed
+                type: console
+                with:
+                  message: >
+                    [REMOVED] {{ foreach.item._source.servicenow.event.host_name.value }}
+                    ({{ foreach.item._source.servicenow.event.support_group.value }})
+                    install_status:
+                    "{{ steps.lookup_last_state.output.hits.hits[0]._source.servicenow.event.install_status.value | default: 'unknown' }}"
+                    → "{{ foreach.item._source.servicenow.event.install_status.value }}"
+
+            else:
+
+              # ── 4d: Existing, active host — detect field-level changes ────
+              - name: branch_changed
+                type: if
+                # Inlined has_changes condition — true if ANY tracked field differs.
+                condition: |
+                  {%- assign prev = steps.lookup_last_state.output.hits.hits[0]._source.servicenow.event -%}
+                  {%- assign cur  = foreach.item._source.servicenow.event -%}
+                  {{-
+                    cur.install_status.value              != prev.install_status.value
+                    or cur.environment.value              != prev.environment.value
+                    or cur.ip_address.value               != prev.ip_address.value
+                    or cur.os.value                       != prev.os.value
+                    or cur.os_version.value               != prev.os_version.value
+                    or cur.os_service_pack.value          != prev.os_service_pack.value
+                    or cur.support_group.value            != prev.support_group.value
+                    or cur.assigned_to.value              != prev.assigned_to.value
+                    or cur.location.value                 != prev.location.value
+                    or cur.department.value               != prev.department.value
+                    or cur.data_classification.value      != prev.data_classification.value
+                    or cur.vulnerability_risk_score.value != prev.vulnerability_risk_score.value
+                    or cur.manufacturer.value             != prev.manufacturer.value
+                    or cur.model_id.value                 != prev.model_id.value
+                    or cur.cpu_count.value                != prev.cpu_count.value
+                    or cur.ram.display_value              != prev.ram.display_value
+                    or cur.disk_space.value               != prev.disk_space.value
+                    or cur.classification.value           != prev.classification.value
+                  -}}
+                steps:
+
+                  - name: write_changed_doc
+                    type: http
+                    with:
+                      method: POST
+                      url: "{{ consts.esEndpoint }}/{{ consts.cmdbUpdatesIndex }}/_doc"
+                      headers:
+                        Content-Type: "application/json"
+                      body:
+                        "@timestamp": "{{ 'now' | date: '%Y-%m-%dT%H:%M:%SZ' }}"
+                        event:
+                          dataset: "cmdb.snapshot"
+                          kind: "event"
+                          category: "configuration"
+                          action: "changed"
+                        host:
+                          name: "{{ foreach.item._source.servicenow.event.host_name.value }}"
+                        support_group: "{{ foreach.item._source.servicenow.event.support_group.value }}"
+                        is_new: false
+                        is_removed: false
+
+                        # ── Inlined change_summary ─────────────────────────
+                        # Comma-separated list of field names that changed.
+                        change_summary: |-
+                          {%- assign prev = steps.lookup_last_state.output.hits.hits[0]._source.servicenow.event -%}
+                          {%- assign cur  = foreach.item._source.servicenow.event -%}
+                          {%- assign fl = "" -%}
+                          {%- assign fd = "" -%}
+                          {%- if cur.install_status.value             != prev.install_status.value             -%}{%- assign fl = fl | append: fd | append: "install_status"           -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.environment.value                != prev.environment.value                -%}{%- assign fl = fl | append: fd | append: "environment"              -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.ip_address.value                 != prev.ip_address.value                -%}{%- assign fl = fl | append: fd | append: "ip_address"               -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.os.value                         != prev.os.value                        -%}{%- assign fl = fl | append: fd | append: "os"                       -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.os_version.value                 != prev.os_version.value                -%}{%- assign fl = fl | append: fd | append: "os_version"               -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.os_service_pack.value            != prev.os_service_pack.value           -%}{%- assign fl = fl | append: fd | append: "os_service_pack"          -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.support_group.value              != prev.support_group.value             -%}{%- assign fl = fl | append: fd | append: "support_group"            -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.assigned_to.value                != prev.assigned_to.value               -%}{%- assign fl = fl | append: fd | append: "assigned_to"              -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.location.value                   != prev.location.value                  -%}{%- assign fl = fl | append: fd | append: "location"                 -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.department.value                 != prev.department.value                -%}{%- assign fl = fl | append: fd | append: "department"               -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.data_classification.value        != prev.data_classification.value       -%}{%- assign fl = fl | append: fd | append: "data_classification"      -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.vulnerability_risk_score.value   != prev.vulnerability_risk_score.value  -%}{%- assign fl = fl | append: fd | append: "vulnerability_risk_score" -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.manufacturer.value               != prev.manufacturer.value              -%}{%- assign fl = fl | append: fd | append: "manufacturer"             -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.model_id.value                   != prev.model_id.value                  -%}{%- assign fl = fl | append: fd | append: "model_id"                 -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.cpu_count.value                  != prev.cpu_count.value                 -%}{%- assign fl = fl | append: fd | append: "cpu_count"                -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.ram.display_value                != prev.ram.display_value               -%}{%- assign fl = fl | append: fd | append: "ram"                      -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.disk_space.value                 != prev.disk_space.value                -%}{%- assign fl = fl | append: fd | append: "disk_space"               -%}{%- assign fd = ", " -%}{%- endif -%}
+                          {%- if cur.classification.value             != prev.classification.value            -%}{%- assign fl = fl | append: fd | append: "classification"           -%}{%- endif -%}
+                          Host {{ foreach.item._source.servicenow.event.host_name.value }} ({{ foreach.item._source.servicenow.event.support_group.value }}) changed: {{- fl -}}
+
+                        # ── Inlined changed_fields ─────────────────────────
+                        # FIX [A]: field type is now 'keyword', not 'nested'.
+                        # FIX [B]: uses |- (strip trailing newline) + {{- ch -}}
+                        #          (strip surrounding whitespace) so the emitted
+                        #          string value is exactly the pipe-delimited JSON
+                        #          with no leading/trailing whitespace or newlines.
+                        # Format: {"field":"f","before":"b","after":"a"}|||{...}
+                        # ES|QL parse: SPLIT(changed_fields, "|||")
+                        changed_fields: |-
+                          {%- assign prev = steps.lookup_last_state.output.hits.hits[0]._source.servicenow.event -%}
+                          {%- assign cur  = foreach.item._source.servicenow.event -%}
+                          {%- assign ch = "" -%}
+                          {%- assign dl = "" -%}
+                          {%- if cur.install_status.value != prev.install_status.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"install_status","before":"'           | append: prev.install_status.value           | append: '","after":"' | append: cur.install_status.value           | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.environment.value != prev.environment.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"environment","before":"'              | append: prev.environment.value              | append: '","after":"' | append: cur.environment.value              | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.ip_address.value != prev.ip_address.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"ip_address","before":"'               | append: prev.ip_address.value               | append: '","after":"' | append: cur.ip_address.value               | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.os.value != prev.os.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"os","before":"'                       | append: prev.os.value                       | append: '","after":"' | append: cur.os.value                       | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.os_version.value != prev.os_version.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"os_version","before":"'               | append: prev.os_version.value               | append: '","after":"' | append: cur.os_version.value               | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.os_service_pack.value != prev.os_service_pack.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"os_service_pack","before":"'          | append: prev.os_service_pack.value          | append: '","after":"' | append: cur.os_service_pack.value          | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.support_group.value != prev.support_group.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"support_group","before":"'            | append: prev.support_group.value            | append: '","after":"' | append: cur.support_group.value            | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.assigned_to.value != prev.assigned_to.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"assigned_to","before":"'              | append: prev.assigned_to.value              | append: '","after":"' | append: cur.assigned_to.value              | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.location.value != prev.location.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"location","before":"'                 | append: prev.location.value                 | append: '","after":"' | append: cur.location.value                 | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.department.value != prev.department.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"department","before":"'               | append: prev.department.value               | append: '","after":"' | append: cur.department.value               | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.data_classification.value != prev.data_classification.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"data_classification","before":"'      | append: prev.data_classification.value      | append: '","after":"' | append: cur.data_classification.value      | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.vulnerability_risk_score.value != prev.vulnerability_risk_score.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"vulnerability_risk_score","before":"' | append: prev.vulnerability_risk_score.value | append: '","after":"' | append: cur.vulnerability_risk_score.value | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.manufacturer.value != prev.manufacturer.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"manufacturer","before":"'             | append: prev.manufacturer.value             | append: '","after":"' | append: cur.manufacturer.value             | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.model_id.value != prev.model_id.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"model_id","before":"'                 | append: prev.model_id.value                 | append: '","after":"' | append: cur.model_id.value                 | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.cpu_count.value != prev.cpu_count.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"cpu_count","before":"'                | append: prev.cpu_count.value                | append: '","after":"' | append: cur.cpu_count.value                | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.ram.display_value != prev.ram.display_value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"ram","before":"'                      | append: prev.ram.display_value              | append: '","after":"' | append: cur.ram.display_value              | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.disk_space.value != prev.disk_space.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"disk_space","before":"'               | append: prev.disk_space.value               | append: '","after":"' | append: cur.disk_space.value               | append: '"}' -%}{%- assign dl = "|||" -%}
+                          {%- endif -%}
+                          {%- if cur.classification.value != prev.classification.value -%}
+                            {%- assign ch = ch | append: dl | append: '{"field":"classification","before":"'           | append: prev.classification.value           | append: '","after":"' | append: cur.classification.value           | append: '"}' -%}
+                          {%- endif -%}
+                          {{- ch -}}
+
+                        changed_field_count: |-
+                          {%- assign prev = steps.lookup_last_state.output.hits.hits[0]._source.servicenow.event -%}
+                          {%- assign cur  = foreach.item._source.servicenow.event -%}
+                          {%- assign n = 0 -%}
+                          {%- if cur.install_status.value             != prev.install_status.value             -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.environment.value                != prev.environment.value                -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.ip_address.value                 != prev.ip_address.value                -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.os.value                         != prev.os.value                        -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.os_version.value                 != prev.os_version.value                -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.os_service_pack.value            != prev.os_service_pack.value           -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.support_group.value              != prev.support_group.value             -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.assigned_to.value                != prev.assigned_to.value               -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.location.value                   != prev.location.value                  -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.department.value                 != prev.department.value                -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.data_classification.value        != prev.data_classification.value       -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.vulnerability_risk_score.value   != prev.vulnerability_risk_score.value  -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.manufacturer.value               != prev.manufacturer.value              -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.model_id.value                   != prev.model_id.value                  -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.cpu_count.value                  != prev.cpu_count.value                 -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.ram.display_value                != prev.ram.display_value               -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.disk_space.value                 != prev.disk_space.value                -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {%- if cur.classification.value             != prev.classification.value            -%}{%- assign n = n | plus: 1 -%}{%- endif -%}
+                          {{- n -}}
+
+                        workflow:
+                          execution_id: "{{ execution.id }}"
+                          run_timestamp: "{{ 'now' | date: '%Y-%m-%dT%H:%M:%SZ' }}"
+                        servicenow:
+                          event: "{{ foreach.item._source.servicenow.event }}"
+
+                  - name: log_changed
+                    type: console
+                    with:
+                      message: >
+                        [CHANGED] {{ foreach.item._source.servicenow.event.host_name.value }}
+                        ({{ foreach.item._source.servicenow.event.support_group.value }})
+
+                else:
+                  - name: log_unchanged
+                    type: console
+                    with:
+                      message: >
+                        [UNCHANGED] {{ foreach.item._source.servicenow.event.host_name.value }}
+                        ({{ foreach.item._source.servicenow.event.support_group.value }})
+                        — skipping write.
+
+  # ── Step 5: Final summary ──────────────────────────────────────────────────
+  - name: log_summary
+    type: console
+    with:
+      message: >
+        ══════════════════════════════════════════════════
+        [CMDB Change Detection] Run complete.
+        Execution ID : {{ execution.id }}
+        Total hosts  : {{ steps.query_cmdb_all_hosts.output.hits.total.value }}
+        Scope filter : "{{ consts.filterSupportGroup | default: "(all groups)" }}"
+
+        Audit documents written to: {{ consts.cmdbUpdatesIndex }}
+          event.action = "added"   → new hosts (first seen)
+          event.action = "changed" → field-level diff detected
+          event.action = "removed" → status moved to Retired/Decommissioned
+
+        Query cmdb-updates in Kibana Discover:
+          event.action : added OR changed OR removed
+          event.dataset : cmdb.snapshot
+
+        ES|QL to expand changed_fields per-doc:
+          FROM cmdb-updates
+          | WHERE event.action == "changed"
+          | EVAL fields = SPLIT(changed_fields, "|||")
+          | KEEP host.name, support_group, change_summary, fields
+        ══════════════════════════════════════════════════
