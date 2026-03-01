@@ -13,9 +13,6 @@ consts:
   bustimeUrl: "http://realtime.portauthority.org/bustime/api/v3/getvehicles?key=BRYJ7vNdMGPArTqeudSY95Z6C&rt=BLLB,BLSV,RED,51&format=json"
 
 triggers:
-  - type: scheduled
-    with:
-      every: "1m"
   - type: manual
 
 steps:
@@ -34,14 +31,11 @@ steps:
         delay: "10s"
 
   # ── 2. Write entire vehicles array to staging under a clean key ───────────
-  # output.data['bustime-response'].vehicle is the confirmed-working path.
-  # Stored under 'vehicles' (no hyphens) so downstream steps can access it.
   - name: write_staging
     type: elasticsearch.index
     with:
       index: "{{ consts.stagingIndex }}"
       id: "current"
-      refresh: true
       document:
         vehicles: ${{ steps.fetch_vehicles.output.data['bustime-response'].vehicle }}
 
@@ -81,30 +75,6 @@ steps:
     on-failure:
       continue: true
 
-  # ── 4. Search staging — retrieve individual vehicle docs ──────────────────
-  # The staging index has ONE doc (id: current) with a 'vehicles' array.
-  # We use inner_hits via nested query... but vehicles isn't mapped as nested.
-  #
-  # Instead: use the confirmed-working foreach on hits.hits, but we need one
-  # hit per vehicle. Since we only have one staging doc, hits.hits has one
-  # element and foreach.item._source.vehicles is the array — which we proved
-  # doesn't work in foreach.
-  #
-  # New approach: skip staging entirely. Use foreach directly on the http
-  # step output using the now-confirmed output.data path. The hyphen is in
-  # the middle of the path — try it with dot notation after .data:
-  # steps.fetch_vehicles.output.data['bustime-response'].vehicle
-  # In foreach bare path syntax this still needs bracket notation.
-  #
-  # BUT: now we know output.data is a plain dot-accessible key. Try storing
-  # the vehicles array in a step output with a clean name using console...
-  # console steps don't produce usable output.
-  #
-  # ✅ ACTUAL SOLUTION: Use elasticsearch.index to write one doc per vehicle
-  # by storing each vehicle individually. We can do this because we know the
-  # exact array path — write vehicle[0] through vehicle[N] explicitly, OR
-  # use the foreach on output.data with the bracket path now that we know
-  # it's output.data not output:
   - name: index_vehicles
     type: foreach
     foreach: "{{ steps.fetch_vehicles.output.data['bustime-response'].vehicle | json }}"
