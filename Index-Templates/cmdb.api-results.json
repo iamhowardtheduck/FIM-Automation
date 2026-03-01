@@ -1,0 +1,98 @@
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "document": {
+          "type": "object",
+          "properties": {
+            "origtatripno": {
+              "type": "long"
+            },
+            "rt": {
+              "type": "keyword"
+            },
+            "tatripid": {
+              "type": "long"
+            },
+            "stsd": {
+              "type": "date"
+            },
+            "spd": {
+              "type": "short"
+            },
+            "hdg": {
+              "type": "short"
+            },
+            "lon": {
+              "type": "half_float"
+            },
+            "pid": {
+              "type": "keyword"
+            },
+            "@polled_at": {
+              "format": "strict_date_optional_time||epoch_millis||EEE MMM dd yyyy HH:mm:ss 'GMT'Z '('zzzz')'",
+              "index": true,
+              "ignore_malformed": false,
+              "store": false,
+              "type": "date",
+              "doc_values": true
+            },
+            "pdist": {
+              "type": "keyword"
+            },
+            "dly": {
+              "type": "boolean"
+            },
+            "mode": {
+              "type": "keyword"
+            },
+            "des": {
+              "type": "keyword"
+            },
+            "stst": {
+              "type": "long"
+            },
+            "tmstmp": {
+              "format": "strict_date_optional_time||epoch_millis||yyyyMMdd HH:mm",
+              "index": true,
+              "ignore_malformed": false,
+              "store": false,
+              "type": "date",
+              "doc_values": true
+            },
+            "tablockid": {
+              "type": "keyword"
+            },
+            "rtdir": {
+              "type": "keyword"
+            },
+            "rtpidatafeed": {
+              "type": "keyword"
+            },
+            "location": {
+              "type": "geo_point"
+            },
+            "psgld": {
+              "type": "keyword"
+            },
+            "lat": {
+              "type": "half_float"
+            }
+          }
+        }
+      }
+    },
+    "settings": {
+      "index": {
+        "number_of_replicas": "0",
+        "mode": "standard"
+      }
+    }
+  },
+  "index_patterns": [
+    "cmdb.api-results"
+  ],
+  "composed_of": [],
+  "ignore_missing_component_templates": [],
+  "allow_auto_create": true
+}
