@@ -39,6 +39,10 @@ echo
 echo "Default Kibana view applied"
 echo
 
+
+# Create index template for cmdb.api-results
+curl -X PUT "http://localhost:30920/_index_template/cmdb.api-results" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Index-Templates/cmdb.api-results.json
+
 # Enable workflows
 curl -X POST "http://localhost:30002/api/kibana/settings" -H "Content-Type: application/json" -H "kbn-xsrf: true" -H "x-elastic-internal-origin: featureflag" -u "elastic-rocks:splunk-sucks"  -d '{
     "changes": {
