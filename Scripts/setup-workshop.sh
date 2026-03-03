@@ -80,6 +80,9 @@ curl -X PUT "http://localhost:30920/cmdb-updates" \
 # Create Elastic-Agent policies & Add ServiceNow & FIM integration assets
 curl -X POST "http://localhost:30002/api/fleet/epm/packages/servicenow/1.3.3" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true"
 curl -X POST "http://localhost:30002/api/fleet/epm/packages/fim/1.16.0" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true"
+curl -X POST "http://localhost:30002/api/fleet/epm/packages/auditd_manager/1.19.1" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true"
+curl -X POST "http://localhost:30002/api/fleet/epm/packages/system_audit/1.11.0" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true"
+curl -X POST "http://localhost:30002/api/fleet/epm/packages/httpjson/1.24.0" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true"
 #curl -X POST "http://localhost:30002/api/fleet/agent_policies?sys_monitoring=true" --header "kbn-xsrf: true"  -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Agent-Policies/Linux.json
 #curl -X POST "http://localhost:30002/api/fleet/agent_policies?sys_monitoring=true" --header "kbn-xsrf: true"  -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Agent-Policies/Windows.json
 #curl -X POST "http://localhost:30002/api/fleet/agent_policies?sys_monitoring=true" --header "kbn-xsrf: true"  -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Agent-Policies/AppOps.json
