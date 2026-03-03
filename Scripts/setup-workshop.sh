@@ -93,8 +93,6 @@ curl -X POST "http://localhost:30002/api/fleet/epm/packages/httpjson/1.24.0" -H 
 #curl -X POST "http://localhost:30002/api/fleet/agent_policies?sys_monitoring=true" --header "kbn-xsrf: true"  -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Agent-Policies/SecOps.json
 #curl -X POST "http://localhost:30002/api/fleet/agent_policies?sys_monitoring=true" --header "kbn-xsrf: true"  -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Agent-Policies/NetOps.json
 
-# Load Workflows
-curl -X POST "http://localhost:30002/api/workflows" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -H "kbn-xsrf: true" -d @/root/FIM-Automation/Workflows/Windows-Servers.yml
 clear
 
 
