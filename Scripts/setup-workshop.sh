@@ -78,6 +78,9 @@ curl -X PUT "http://localhost:30920/cmdb-updates" \
   }'
 
 # Create Elastic-Agent policies & Add ServiceNow & FIM integration assets
+echo
+echo "Enabling the ServiceNow, File Integrity Monitoring, Auditd Manager, System Audit, and Custom API integration; please stand by."
+echo
 curl -X POST "http://localhost:30002/api/fleet/epm/packages/servicenow/1.3.3" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true"
 curl -X POST "http://localhost:30002/api/fleet/epm/packages/fim/1.16.0" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true"
 curl -X POST "http://localhost:30002/api/fleet/epm/packages/auditd_manager/1.19.1" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"  -H "kbn-xsrf: true"
