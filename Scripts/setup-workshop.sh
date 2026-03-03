@@ -26,6 +26,11 @@ curl -X POST "http://localhost:30920/_security/user/elastic-rocks" -H "Content-T
 
 
 # Install LLM Connector
+echo
+echo
+echo "Creating Elastic LLM Connection and loading Elastic Documentation, this will take a moment."
+echo
+echo
 bash /opt/workshops/elastic-llm.sh -k false -m claude-sonnet-4 -d true
 
 echo
