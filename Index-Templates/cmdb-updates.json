@@ -1,0 +1,250 @@
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "category": {
+              "type": "keyword"
+            },
+            "dataset": {
+              "type": "keyword"
+            },
+            "kind": {
+              "type": "keyword"
+            },
+            "type": {
+              "type": "keyword"
+            }
+          }
+        },
+        "host": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "keyword"
+            }
+          }
+        },
+        "servicenow": {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "object",
+              "properties": {
+                "sys_class_name": {
+                  "type": "object",
+                  "properties": {
+                    "display_name": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "support_group": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "serial_number": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "ram": {
+                  "type": "object",
+                  "properties": {
+                    "display_value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "os": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "os_version": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "os_service_pack": {
+                  "type": "object",
+                  "enabled": true,
+                  "subobjects": true,
+                  "dynamic": true,
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "os_domain": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "model_id": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "manufacturer": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "location": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "install_status": {
+                  "type": "object",
+                  "properties": {
+                    "display_value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "host_name": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "fqdn": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "environment": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "dns_domain": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "department": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "data_classification": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "cpu_name": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "cpu_manufacturer": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "cpu_count": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "classification": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "assigned_to": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "workflow": {
+          "type": "object",
+          "properties": {
+            "execution_id": {
+              "type": "keyword"
+            }
+          }
+        }
+      }
+    },
+    "settings": {
+      "index": {
+        "number_of_replicas": 0,
+        "mode": "standard"
+      }
+    }
+  },
+  "index_patterns": [
+    "cmdb-updates*"
+  ]
+}
