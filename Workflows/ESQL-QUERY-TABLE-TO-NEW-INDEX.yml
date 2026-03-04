@@ -1,0 +1,30 @@
+name: ES|QL Query Output table values to new Index
+enabled: true
+triggers:
+  - type: manual
+steps:
+  - name: constant-changes
+    type: elasticsearch.esql.query
+    with:
+      query: >
+        FROM cmdb-support-group-changes*
+        |WHERE servicenow.event.support_group.previous != servicenow.event.support_group.current
+        | STATS BY host.name, servicenow.event.support_group.previous, servicenow.event.support_group.current
+ 
+  - name: loop_over_columns
+    type: foreach
+    foreach: "{{steps.constant-changes.output.values}}"
+    steps:
+ 
+      - name: log_to_elasticsearch
+        type: elasticsearch.index
+        with:
+          index: "daily-updates"
+          id: "{{ execution.id }}-{{ foreach.index }}"
+          document:
+            '@timestamp': "{{ execution.startedAt }}"
+            hostnames: "${{ foreach.item[0] }}"
+            previous_value: "${{ foreach.item[1] }}"
+            current_value: "${{ foreach.item[2] }}"
+    
+            
