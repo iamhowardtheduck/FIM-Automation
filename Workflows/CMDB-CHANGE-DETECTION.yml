@@ -1,0 +1,172 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CMDB → New Host Support Group Change Detection
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# What this workflow does:
+#   1. Queries cmdb-updates for all docs where change.is_new == true
+#   2. For each new host, uses servicenow.event.host_name.value to look up
+#      the two most recent records in logs-servicenow.event-default
+#   3. Compares servicenow.event.support_group.value between those two records
+#   4. If support_group differs, writes a doc to cmdb-support-group-changes
+#
+# Trigger: Manual
+# Depends: cmdb-updates populated by the CMDB → Windows Agent Policy workflow
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: "CMDB → New Host Support Group Change Detection"
+description: >
+  Finds all hosts in cmdb-updates where change.is_new is true, looks up the
+  two most recent ServiceNow records per host, and writes a change document to
+  cmdb-support-group-changes whenever support_group.value differs between them.
+enabled: true
+tags:
+  - fim-workshop
+  - cmdb
+  - servicenow
+  - support-group
+  - change-detection
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+consts:
+  cmdbUpdatesIndex: "cmdb-updates"
+  serviceNowIndex: "logs-servicenow.event-default"
+  changesIndex: "cmdb-support-group-changes"
+  elasticEndpoint: "http://elastic-rocks:splunk-sucks@kubernetes-vm:30920"
+
+# ── Trigger ────────────────────────────────────────────────────────────────────
+triggers:
+  - type: manual
+
+# ── Steps ─────────────────────────────────────────────────────────────────────
+steps:
+
+  # ── Step 1: Ensure cmdb-support-group-changes index + mapping exists ───────
+  - name: ensure_changes_index
+    type: http
+    with:
+      method: PUT
+      url: "{{ consts.elasticEndpoint }}/{{ consts.changesIndex }}/_mapping"
+      headers:
+        Content-Type: "application/json"
+      body:
+        properties:
+          "@timestamp":
+            type: date
+          host:
+            properties:
+              name:
+                type: keyword
+          servicenow:
+            properties:
+              event:
+                properties:
+                  host_name:
+                    properties:
+                      value:
+                        type: keyword
+                  support_group:
+                    properties:
+                      previous:
+                        type: keyword
+                      current:
+                        type: keyword
+          change:
+            properties:
+              is_new:
+                type: boolean
+              support_group_changed:
+                type: boolean
+          workflow:
+            properties:
+              execution_id:
+                type: keyword
+
+  # ── Step 2: Get all new hosts from cmdb-updates ────────────────────────────
+  - name: get_new_hosts
+    type: elasticsearch.search
+    with:
+      index: "{{ consts.cmdbUpdatesIndex }}"
+      size: 1000
+      query:
+        bool:
+          must:
+            - term:
+                change.is_new:
+                  value: true
+            - term:
+                event.dataset: "cmdb.update"
+
+  # ── Step 3: Log how many new hosts we found ────────────────────────────────
+  - name: log_new_host_count
+    type: console
+    with:
+      message: >
+        Found {{ steps.get_new_hosts.output.hits.total.value }} new host records
+        in {{ consts.cmdbUpdatesIndex }} where change.is_new == true.
+        Beginning support group history lookup in {{ consts.serviceNowIndex }}.
+
+  # ── Step 4: For each new host — fetch 2 most recent ServiceNow records ─────
+  - name: process_new_hosts
+    type: foreach
+    foreach: "{{ steps.get_new_hosts.output.hits.hits }}"
+    steps:
+
+      # ── Step 4a: Fetch the 2 most recent ServiceNow records for this host ──
+      - name: fetch_support_group_history
+        type: elasticsearch.search
+        with:
+          index: "{{ consts.serviceNowIndex }}"
+          size: 2
+          query:
+            term:
+              servicenow.event.host_name.value:
+                value: "{{ foreach.item._source.servicenow.event.host_name.value }}"
+
+
+      # ── Step 4b: Log what we found for this host ───────────────────────────
+      - name: log_support_group_history
+        type: console
+        with:
+          message: >
+            Host: {{ foreach.item._source.servicenow.event.host_name.value }}
+            ServiceNow records found: {{ steps.fetch_support_group_history.output.hits.total.value }}
+            Current support_group:  {{ steps.fetch_support_group_history.output.hits.hits[0]._source.servicenow.event.support_group.value }}
+            Previous support_group: {{ steps.fetch_support_group_history.output.hits.hits[1]._source.servicenow.event.support_group.value }}
+
+      # ── Step 4c: Only write if support_group changed between the two records
+      - name: write_if_changed
+        type: http
+        with:
+          method: POST
+          url: "{{ consts.elasticEndpoint }}/{{ consts.changesIndex }}/_doc"
+          headers:
+            Content-Type: "application/json"
+          body:
+            "@timestamp": "{{ 'now' | date: '%Y-%m-%dT%H:%M:%SZ' }}"
+            workflow:
+              execution_id: "{{ execution.id }}"
+            host:
+              name: "{{ foreach.item._source.servicenow.event.host_name.value }}"
+            servicenow:
+              event:
+                host_name:
+                  value: "{{ foreach.item._source.servicenow.event.host_name.value }}"
+                support_group:
+                  previous: "{{ steps.fetch_support_group_history.output.hits.hits[1]._source.servicenow.event.support_group.value }}"
+                  current: "{{ steps.fetch_support_group_history.output.hits.hits[0]._source.servicenow.event.support_group.value }}"
+            change:
+              is_new: true
+              support_group_changed: true
+        condition: >
+          steps.fetch_support_group_history.output.hits.total.value >= 2
+          and steps.fetch_support_group_history.output.hits.hits[0]._source.servicenow.event.support_group.value
+              != steps.fetch_support_group_history.output.hits.hits[1]._source.servicenow.event.support_group.value
+
+  # ── Step 5: Summary ────────────────────────────────────────────────────────
+  - name: log_summary
+    type: console
+    with:
+      message: >
+        Support group change detection complete.
+        New hosts evaluated: {{ steps.get_new_hosts.output.hits.total.value }}
+        Check {{ consts.changesIndex }} for docs where change.support_group_changed == true.
