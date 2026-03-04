@@ -1,0 +1,70 @@
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        },
+        "change": {
+          "properties": {
+            "is_new": {
+              "type": "boolean"
+            },
+            "support_group_changed": {
+              "type": "boolean"
+            }
+          }
+        },
+        "host": {
+          "properties": {
+            "name": {
+              "type": "keyword"
+            }
+          }
+        },
+        "servicenow": {
+          "properties": {
+            "event": {
+              "properties": {
+                "host_name": {
+                  "properties": {
+                    "value": {
+                      "type": "keyword"
+                    }
+                  }
+                },
+                "support_group": {
+                  "properties": {
+                    "current": {
+                      "type": "keyword"
+                    },
+                    "previous": {
+                      "type": "keyword"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "workflow": {
+          "properties": {
+            "execution_id": {
+              "type": "keyword"
+            }
+          }
+        }
+      }
+    },
+    "settings": {
+      "index": {
+        "number_of_replicas": "0",
+        "mode": "standard"
+      }}
+    },
+    "index_patterns": [
+      "cmdb-support-group-changes*"
+    ],
+    "composed_of": [],
+    "ignore_missing_component_templates": []
+  }
