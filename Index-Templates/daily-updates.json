@@ -1,0 +1,33 @@
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "hostname": {
+          "type": "keyword"
+        },
+        "@timestamp": {
+          "type": "date"
+        },
+        "previous_value": {
+          "type": "keyword"
+        },
+        "current_value": {
+          "type": "keyword"
+        }
+      }
+    },
+    "settings": {
+      "index": {
+        "number_of_replicas": "0",
+        "default_pipeline": "daily-updates",
+        "mode": "standard"
+      }
+    }
+  },
+  "index_patterns": [
+    "daily-updates*"
+  ],
+  "composed_of": [],
+  "ignore_missing_component_templates": [],
+  "allow_auto_create": true
+}
