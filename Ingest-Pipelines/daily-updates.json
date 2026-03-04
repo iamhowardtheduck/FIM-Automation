@@ -1,0 +1,45 @@
+{
+  "processors": [
+    {
+      "rename": {
+        "field": "document.@timestamp",
+        "target_field": "@timestamp",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "date": {
+        "field": "@timestamp",
+        "formats": [
+          "EEE MMM dd yyyy HH:mm:ss 'GMT'Z '('zzzz')'"
+        ],
+        "ignore_failure": true
+      }
+    },
+    {
+      "rename": {
+        "field": "document.hostnames",
+        "target_field": "hostname",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "rename": {
+        "field": "document.previous_value",
+        "target_field": "previous_value",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "rename": {
+        "field": "document.current_value",
+        "target_field": "current_value",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    }
+  ]
+}
