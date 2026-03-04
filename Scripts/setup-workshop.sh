@@ -60,23 +60,8 @@ curl -X PUT "http://localhost:30920/_index_template/cmdb-support-group-changes" 
 clear
 
 # Creat the cmdb-updates index
-curl -X PUT "http://localhost:30920/cmdb-updates" \
-  -H "Content-Type: application/json" \
-  -u "elastic-rocks:splunk-sucks" \
-  -d '{
-    "mappings": {
-      "properties": {
-        "@timestamp":        { "type": "date" },
-        "event.dataset":     { "type": "keyword" },
-        "event.kind":        { "type": "keyword" },
-        "event.category":    { "type": "keyword" },
-        "event.type":        { "type": "keyword" },
-        "host.name":         { "type": "keyword" },
-        "change.is_new":     { "type": "boolean" },
-        "workflow.execution_id": { "type": "keyword" }
-      }
-    }
-  }'
+curl -X PUT "http://localhost:30920/cmdb-support-group-changes" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks"
+curl -X PUT "http://localhost:30920/cmdb-updates" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" 
 
 # Create Elastic-Agent policies & Add ServiceNow & FIM integration assets
 echo
