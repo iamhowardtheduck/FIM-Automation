@@ -44,10 +44,13 @@ echo
 echo "Default Kibana view applied"
 echo
 
+# Create an updated ingest pipeline for daily-updates
+curl -X PUT "http://localhost:30920/_ingest/pipeline/daily-updates" -H "Content-Type: application/x-ndjson" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Ingest-Pipelines/daily-updates.json
 
 # Create index template for cmdb.api-results
 curl -X PUT "http://localhost:30920/_index_template/cmdb.api-results" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Index-Templates/cmdb.api-results.json
 curl -X PUT "http://localhost:30920/_index_template/cmdb-updates" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Index-Templates/cmdb-updates.json
+curl -X PUT "http://localhost:30920/_index_template/daily-updates" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Index-Templates/daily-updates.json
 curl -X PUT "http://localhost:30920/_index_template/cmdb-support-group-changes" -H "Content-Type: application/json" -u "elastic-rocks:splunk-sucks" -d @/root/FIM-Automation/Index-Templates/cmdb-support-group-changes.json
 
 # Enable workflows
